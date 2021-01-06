@@ -141,6 +141,9 @@ typedef struct H5VL_async_t {
     ABT_mutex           obj_mutex;
     ABT_pool            *pool_ptr;
     hbool_t             is_col_meta;
+#ifdef ENABLE_DSET_MEMCPY
+    hsize_t             dset_size;
+#endif
 } H5VL_async_t;
 
 typedef struct async_task_list_t {
@@ -323,6 +326,9 @@ typedef struct async_dataset_write_args_t {
     hid_t                    plist_id;
     void                     *buf;
     void                     **req;
+#ifdef ENABLE_DSET_MEMCPY
+    bool                     free_buf;
+#endif
 #ifdef ENABLE_TIMING
     struct timeval create_time;
     struct timeval start_time;
@@ -6084,6 +6090,10 @@ async_dataset_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL
     async_obj->create_task = async_task;
     async_obj->under_vol_id = async_task->under_vol_id;
 
+#ifdef ENABLE_DSET_MEMCPY
+    async_obj->dset_size = H5Tget_size(type_id) * H5Sget_simple_extent_npoints(space_id);
+#endif
+
     /* Lock parent_obj */
     while (1) {
         if (parent_obj->obj_mutex && ABT_mutex_trylock(parent_obj->obj_mutex) == ABT_SUCCESS) {
@@ -7344,8 +7354,81 @@ done:
     printf("  [ASYNC ABT TIMING] %-24s \t    time4(n.vol): %f\n", __func__, time4);
     fflush(stdout);
 #endif
+
+#ifdef ENABLE_DSET_MEMCPY
+    if (args->free_buf)
+        free(args->buf);
+#endif
     return;
 } // End async_dataset_write_fn
+
+#ifdef ENABLE_DSET_MEMCPY
+static herr_t
+dataset_get_wrapper(void *dset, hid_t driver_id, H5VL_dataset_get_t get_type, hid_t dxpl_id, void **req, ...)
+{
+    herr_t ret;
+    va_list args;
+    va_start(args, req);
+    ret = H5VLdataset_get(dset, driver_id, get_type, dxpl_id, req, args);
+    va_end(args);
+    return ret;
+}
+
+int is_contig_memspace(hid_t memspace)
+{
+    hsize_t nblocks, slab[32];
+    int ndim;
+    H5S_sel_type type;
+
+    if (memspace == H5S_SEL_ALL || memspace == H5S_SEL_NONE) {
+        return 1;
+    }
+
+    type = H5Sget_select_type(memspace);
+    if (type == H5S_SEL_POINTS) {
+        return 0;
+    }
+    else if (type == H5S_SEL_HYPERSLABS) {
+        ndim = H5Sget_simple_extent_ndims(memspace);
+        if (ndim != 1)
+            return 0;
+
+        nblocks = H5Sget_select_hyper_nblocks(memspace);
+        if (nblocks == 1) {
+            H5Sget_select_hyper_blocklist(memspace, 0, 1, slab);
+            if (slab[0] == 0) {
+                return 1;
+            }
+        }
+        return 0;
+    }
+    return 0;
+}
+
+herr_t
+H5VLasync_get_data_nelem(void *dset, hid_t space, hid_t connector_id, hsize_t *size)
+{
+    herr_t ret = 0;
+    hid_t dset_space;
+
+    if (H5S_ALL == space) {
+        if ((ret = dataset_get_wrapper(dset, connector_id, H5VL_DATASET_GET_SPACE,
+                                       H5P_DATASET_XFER_DEFAULT, NULL, (void*)&dset_space)) < 0) {
+            fprintf(stderr,"  [ASYNC VOL ERROR] %s dataset_get_wrapper failed\n", __func__);
+            goto done;
+        }
+        (*size) = H5Sget_simple_extent_npoints(dset_space);
+
+        if ((ret = H5Sclose(dset_space)) < 0)
+            fprintf(stderr,"  [ASYNC VOL ERROR] %s H5Sclose failed\n", __func__);
+    }
+    else
+        (*size) = H5Sget_select_npoints(space);
+
+done:
+    return ret;
+}
+#endif
 
 static herr_t
 async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
@@ -7395,6 +7478,40 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
         args->plist_id = H5Pcopy(plist_id);
     args->buf              = (void*)buf;
     args->req              = req;
+
+#ifdef ENABLE_DSET_MEMCPY
+    hsize_t buf_size = 0;
+    if (parent_obj->dset_size > 0 && args->file_space_id == H5S_ALL ) {
+        buf_size = parent_obj->dset_size;
+    }
+    else {
+        if (H5VLasync_get_data_nelem(args->dset, args->file_space_id, parent_obj->under_vol_id, &buf_size) < 0) {
+            fprintf(stderr,"  [ASYNC VOL ERROR] %s H5VLasync_get_data_nelem failed\n", __func__);
+            goto done;
+        }
+        buf_size *= H5Tget_size(mem_type_id);
+    }
+
+    if (NULL == (args->buf = malloc(buf_size))) {
+        fprintf(stderr,"  [ASYNC VOL ERROR] %s malloc failed!\n", __func__);
+        goto done;
+    }
+
+    // If is contiguous space, no need to go through gather process as it can be costly
+    if (1 != is_contig_memspace(mem_space_id)) {
+        fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__);
+        H5Dgather(mem_space_id, buf, mem_type_id, buf_size, args->buf, NULL, NULL);
+        hsize_t elem_size =  H5Tget_size(mem_type_id);
+        hsize_t n_elem = (hsize_t)(buf_size/elem_size);
+        if (args->mem_space_id > 0) 
+            H5Sclose(args->mem_space_id);
+        args->mem_space_id = H5Screate_simple(1, &n_elem, NULL);
+    }
+    else {
+        memcpy(args->buf, buf, buf_size);
+    }
+    args->free_buf = true;
+#endif
 
     if (req) {
         H5VL_async_t *new_req;
