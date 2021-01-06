@@ -7376,7 +7376,7 @@ dataset_get_wrapper(void *dset, hid_t driver_id, H5VL_dataset_get_t get_type, hi
 
 int is_contig_memspace(hid_t memspace)
 {
-    hsize_t nblocks, slab[32];
+    hsize_t nblocks;
     int ndim;
     H5S_sel_type type;
 
@@ -7394,12 +7394,8 @@ int is_contig_memspace(hid_t memspace)
             return 0;
 
         nblocks = H5Sget_select_hyper_nblocks(memspace);
-        if (nblocks == 1) {
-            H5Sget_select_hyper_blocklist(memspace, 0, 1, slab);
-            if (slab[0] == 0) {
-                return 1;
-            }
-        }
+        if (nblocks == 1)
+            return 1;
         return 0;
     }
     return 0;
@@ -7499,7 +7495,7 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
 
     // If is contiguous space, no need to go through gather process as it can be costly
     if (1 != is_contig_memspace(mem_space_id)) {
-        fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__);
+        /* fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__); */
         H5Dgather(mem_space_id, buf, mem_type_id, buf_size, args->buf, NULL, NULL);
         hsize_t elem_size =  H5Tget_size(mem_type_id);
         hsize_t n_elem = (hsize_t)(buf_size/elem_size);
