@@ -1107,16 +1107,16 @@ async_term(void)
         async_instance_mutex_g = NULL;
     }
 
-    abt_ret = ABT_finalize();
-    if (ABT_SUCCESS != abt_ret) {
-        fprintf(stderr, "  [ASYNC VOL ERROR] with finalize argobots\n");
-        ret_val = -1;
-        goto done;
-    }
-    #ifdef ENABLE_DBG_MSG
-    else
-        fprintf(stderr, "  [ASYNC VOL DBG] Success with Argobots finalize\n");
-    #endif
+    /* abt_ret = ABT_finalize(); */
+    /* if (ABT_SUCCESS != abt_ret) { */
+    /*     fprintf(stderr, "  [ASYNC VOL ERROR] with finalize argobots\n"); */
+    /*     ret_val = -1; */
+    /*     goto done; */
+    /* } */
+    /* #ifdef ENABLE_DBG_MSG */
+    /* else */
+    /*     fprintf(stderr, "  [ASYNC VOL DBG] Success with Argobots finalize\n"); */
+    /* #endif */
 
 done:
     return ret_val;
@@ -2640,6 +2640,7 @@ async_attr_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_lo
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -3094,6 +3095,7 @@ async_attr_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -3527,6 +3529,7 @@ async_attr_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -3973,6 +3976,7 @@ async_attr_write(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -4405,6 +4409,7 @@ async_attr_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -4840,6 +4845,7 @@ async_attr_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -5272,6 +5278,7 @@ async_attr_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -6179,6 +6186,7 @@ async_dataset_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -6633,6 +6641,7 @@ async_dataset_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -7071,6 +7080,7 @@ async_dataset_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_ty
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -7495,18 +7505,18 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
     }
 
     // If is contiguous space, no need to go through gather process as it can be costly
-    if (1 != is_contig_memspace(mem_space_id)) {
-        /* fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__); */
-        H5Dgather(mem_space_id, buf, mem_type_id, buf_size, args->buf, NULL, NULL);
-        hsize_t elem_size =  H5Tget_size(mem_type_id);
-        hsize_t n_elem = (hsize_t)(buf_size/elem_size);
-        if (args->mem_space_id > 0) 
-            H5Sclose(args->mem_space_id);
-        args->mem_space_id = H5Screate_simple(1, &n_elem, NULL);
-    }
-    else {
+    /* if (1 != is_contig_memspace(mem_space_id)) { */
+    /*     /1* fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__); *1/ */
+    /*     H5Dgather(mem_space_id, buf, mem_type_id, buf_size, args->buf, NULL, NULL); */
+    /*     hsize_t elem_size =  H5Tget_size(mem_type_id); */
+    /*     hsize_t n_elem = (hsize_t)(buf_size/elem_size); */
+    /*     if (args->mem_space_id > 0) */ 
+    /*         H5Sclose(args->mem_space_id); */
+    /*     args->mem_space_id = H5Screate_simple(1, &n_elem, NULL); */
+    /* } */
+    /* else { */
         memcpy(args->buf, buf, buf_size);
-    }
+    /* } */
     args->free_buf = true;
 #endif
 
@@ -7622,6 +7632,7 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -8055,6 +8066,7 @@ async_dataset_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -8487,6 +8499,7 @@ async_dataset_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -8919,6 +8932,7 @@ async_dataset_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -9358,6 +9372,7 @@ async_dataset_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -9822,6 +9837,7 @@ async_datatype_commit(async_instance_t* aid, H5VL_async_t *parent_obj, const H5V
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -10276,6 +10292,7 @@ async_datatype_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -10708,6 +10725,7 @@ async_datatype_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -11140,6 +11158,7 @@ async_datatype_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -11572,6 +11591,7 @@ async_datatype_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -12006,6 +12026,7 @@ async_datatype_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -12463,6 +12484,7 @@ async_file_create(async_instance_t* aid, const char *name, unsigned flags, hid_t
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -12922,6 +12944,7 @@ async_file_open(task_list_qtype qtype, async_instance_t* aid, const char *name, 
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -13355,6 +13378,7 @@ async_file_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -13787,6 +13811,7 @@ async_file_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -14217,6 +14242,7 @@ async_file_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -14508,6 +14534,7 @@ done:
     printf("  [ASYNC ABT TIMING] %-24s \t    time4(n.vol): %f\n", __func__, time4);
     fflush(stdout);
 #endif
+    async_instance_g->start_abt_push = false;
     return;
 } // End async_file_close_fn
 
@@ -14688,6 +14715,7 @@ wait:
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -15150,6 +15178,7 @@ async_group_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_l
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -15604,6 +15633,7 @@ async_group_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -16036,6 +16066,7 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -16468,6 +16499,7 @@ async_group_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -16900,6 +16932,7 @@ async_group_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -17348,6 +17381,7 @@ async_group_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -17805,6 +17839,7 @@ async_link_create(task_list_qtype qtype, async_instance_t* aid, H5VL_link_create
             }
         }
     }
+        async_instance_g->start_abt_push = false;
 
 #ifdef ENABLE_TIMING
     gettimeofday(&now_time, NULL);
@@ -18246,6 +18281,7 @@ async_link_copy(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -18686,6 +18722,7 @@ async_link_move(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -19121,6 +19158,7 @@ async_link_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -19559,6 +19597,7 @@ async_link_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -19991,6 +20030,7 @@ async_link_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -20442,6 +20482,7 @@ async_object_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -20892,6 +20933,7 @@ async_object_copy(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -21335,6 +21377,7 @@ async_object_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -21772,6 +21815,7 @@ async_object_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
@@ -22204,6 +22248,7 @@ async_object_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
                 goto done;
             }
         }
+        async_instance_g->start_abt_push = false;
     }
 
 #ifdef ENABLE_TIMING
