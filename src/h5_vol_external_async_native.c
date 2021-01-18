@@ -54,8 +54,8 @@
 
 /* Whether to display log messge when callback is invoked */
 /* (Uncomment to enable) */
-#define ENABLE_LOG                  1
-#define ENABLE_DBG_MSG              1
+/* #define ENABLE_LOG                  1 */
+/* #define ENABLE_DBG_MSG              1 */
 /* #define ENABLE_TIMING               1 */
 /* #define PRINT_ERROR_STACK           1 */
 /* #define ENABLE_ASYNC_LOGGING */
@@ -2415,7 +2415,7 @@ done:
     if(args->space_id > 0)    H5Sclose(args->space_id);
     if(args->acpl_id > 0)    H5Pclose(args->acpl_id);
     if(args->aapl_id > 0)    H5Pclose(args->aapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -2520,8 +2520,10 @@ async_attr_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_lo
         args->acpl_id = H5Pcopy(acpl_id);
     if(aapl_id > 0)
         args->aapl_id = H5Pcopy(aapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -2578,7 +2580,7 @@ async_attr_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_lo
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -2614,7 +2616,7 @@ async_attr_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_lo
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -2873,7 +2875,7 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->aapl_id > 0)    H5Pclose(args->aapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -2972,8 +2974,10 @@ async_attr_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
         args->name = strdup(name);
     if(aapl_id > 0)
         args->aapl_id = H5Pcopy(aapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -3030,7 +3034,7 @@ async_attr_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -3066,7 +3070,7 @@ async_attr_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -3318,7 +3322,7 @@ done:
 #endif
 
     if(args->mem_type_id > 0)    H5Tclose(args->mem_type_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -3406,8 +3410,10 @@ async_attr_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type_
     if(mem_type_id > 0)
         args->mem_type_id = H5Tcopy(mem_type_id);
     args->buf              = buf;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -3497,7 +3503,7 @@ async_attr_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -3749,7 +3755,7 @@ done:
 #endif
 
     if(args->mem_type_id > 0)    H5Tclose(args->mem_type_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -3836,8 +3842,10 @@ async_attr_write(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type
     args->attr             = parent_obj->under_object;
     if(mem_type_id > 0)
         args->mem_type_id = H5Tcopy(mem_type_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -3905,7 +3913,7 @@ async_attr_write(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -3941,7 +3949,7 @@ async_attr_write(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_type
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -4195,7 +4203,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -4279,8 +4287,10 @@ async_attr_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
 
     args->obj              = parent_obj->under_object;
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -4335,7 +4345,7 @@ async_attr_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -4371,7 +4381,7 @@ async_attr_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -4566,17 +4576,19 @@ async_attr_specific_fn(void *foo)
     /* Aquire async obj mutex and set the obj */
     assert(task->async_obj->obj_mutex);
     assert(task->async_obj->magic == ASYNC_MAGIC);
-    while (1) {
-        if (ABT_mutex_trylock(task->async_obj->obj_mutex) == ABT_SUCCESS) {
-            break;
+    if (args->specific_type != H5VL_ATTR_ITER) {
+        while (1) {
+            if (ABT_mutex_trylock(task->async_obj->obj_mutex) == ABT_SUCCESS) {
+                is_lock = 1;
+                break;
+            }
+            else {
+                fprintf(stderr,"  [ASYNC ABT DBG] %s error with try_lock\n", __func__);
+                break;
+            }
+            usleep(1000);
         }
-        else {
-            fprintf(stderr,"  [ASYNC ABT DBG] %s error with try_lock\n", __func__);
-            break;
-        }
-        usleep(1000);
     }
-    is_lock = 1;
 
     // Restore previous library state
     assert(task->h5_state);
@@ -4626,7 +4638,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -4712,7 +4724,7 @@ async_attr_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
     args->req              = req;
     va_copy(args->arguments, arguments);
@@ -4768,7 +4780,7 @@ async_attr_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -4804,7 +4816,7 @@ async_attr_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -5058,7 +5070,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -5142,8 +5154,10 @@ async_attr_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -5198,7 +5212,7 @@ async_attr_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -5234,7 +5248,7 @@ async_attr_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -5485,7 +5499,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -5571,8 +5585,10 @@ async_attr_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     }
 
     args->attr             = parent_obj->under_object;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -5626,7 +5642,7 @@ async_attr_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -5669,7 +5685,7 @@ async_attr_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     aid->start_abt_push = true;
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -5932,7 +5948,7 @@ done:
     if(args->space_id > 0)    H5Sclose(args->space_id);
     if(args->dcpl_id > 0)    H5Pclose(args->dcpl_id);
     if(args->dapl_id > 0)    H5Pclose(args->dapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -6039,8 +6055,10 @@ async_dataset_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL
         args->dcpl_id = H5Pcopy(dcpl_id);
     if(dapl_id > 0)
         args->dapl_id = H5Pcopy(dapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -6101,7 +6119,7 @@ async_dataset_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -6137,7 +6155,7 @@ async_dataset_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -6396,7 +6414,7 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->dapl_id > 0)    H5Pclose(args->dapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -6495,8 +6513,10 @@ async_dataset_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
         args->name = strdup(name);
     if(dapl_id > 0)
         args->dapl_id = H5Pcopy(dapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -6553,7 +6573,7 @@ async_dataset_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -6990,7 +7010,7 @@ async_dataset_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_ty
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -7027,7 +7047,7 @@ async_dataset_read(async_instance_t* aid, H5VL_async_t *parent_obj, hid_t mem_ty
     }
 
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -7541,7 +7561,7 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -7578,7 +7598,7 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
     }
 
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -7833,7 +7853,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -7917,8 +7937,10 @@ async_dataset_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
 
     args->dset             = parent_obj->under_object;
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -7973,7 +7995,7 @@ async_dataset_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -8263,7 +8285,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -8347,8 +8369,10 @@ async_dataset_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
 
     args->obj              = parent_obj->under_object;
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -8403,7 +8427,7 @@ async_dataset_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -8439,7 +8463,7 @@ async_dataset_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -8693,7 +8717,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -8777,8 +8801,10 @@ async_dataset_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -8833,7 +8859,7 @@ async_dataset_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -8869,7 +8895,7 @@ async_dataset_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -9120,7 +9146,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -9206,8 +9232,10 @@ async_dataset_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     }
 
     args->dset             = parent_obj->under_object;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -9261,7 +9289,7 @@ async_dataset_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -9363,7 +9391,7 @@ async_datatype_commit_fn(void *foo)
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
     async_datatype_commit_args_t *args = (async_datatype_commit_args_t*)(task->args);
-    void *status;
+    void *under_obj;
 
 #ifdef ENABLE_TIMING
     struct timeval now_time;
@@ -9528,13 +9556,14 @@ async_datatype_commit_fn(void *foo)
 
     /* Try executing operation, without default error stack handling */
     H5E_BEGIN_TRY {
-        status = H5VLdatatype_commit(args->obj, args->loc_params, task->under_vol_id, args->name, args->type_id, args->lcpl_id, args->tcpl_id, args->tapl_id, args->dxpl_id, args->req);
+        under_obj = H5VLdatatype_commit(args->obj, args->loc_params, task->under_vol_id, args->name, args->type_id, args->lcpl_id, args->tcpl_id, args->tapl_id, args->dxpl_id, args->req);
     } H5E_END_TRY
-    if (NULL ==  status) {
+    if (NULL ==  under_obj) {
         if ((task->err_stack = H5Eget_current_stack()) < 0)
             fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__);
         goto done;
     }
+    task->async_obj->under_object = under_obj;
 
 #ifdef ENABLE_TIMING
     gettimeofday(&timer4, NULL);
@@ -9561,10 +9590,10 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->type_id > 0)    H5Tclose(args->type_id);
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
-    if(args->tcpl_id > 0)    H5Pclose(args->tcpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
+    if(args->tcpl_id != H5P_DATATYPE_CREATE_DEFAULT)    H5Pclose(args->tcpl_id);
     if(args->tapl_id > 0)    H5Pclose(args->tapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -9663,14 +9692,20 @@ async_datatype_commit(async_instance_t* aid, H5VL_async_t *parent_obj, const H5V
         args->name = strdup(name);
     if(type_id > 0)
         args->type_id = H5Tcopy(type_id);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
-    if(tcpl_id > 0)
+    else
+        args->lcpl_id = H5P_LINK_CREATE_DEFAULT;
+    if(tcpl_id != H5P_DATATYPE_CREATE_DEFAULT)
         args->tcpl_id = H5Pcopy(tcpl_id);
+    else
+        args->tcpl_id = H5P_DATATYPE_CREATE_DEFAULT;
     if(tapl_id > 0)
         args->tapl_id = H5Pcopy(tapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -9727,7 +9762,7 @@ async_datatype_commit(async_instance_t* aid, H5VL_async_t *parent_obj, const H5V
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -9763,7 +9798,7 @@ async_datatype_commit(async_instance_t* aid, H5VL_async_t *parent_obj, const H5V
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -10022,7 +10057,7 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->tapl_id > 0)    H5Pclose(args->tapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -10121,8 +10156,10 @@ async_datatype_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_
         args->name = strdup(name);
     if(tapl_id > 0)
         args->tapl_id = H5Pcopy(tapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -10179,7 +10216,7 @@ async_datatype_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -10215,7 +10252,7 @@ async_datatype_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -10469,7 +10506,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -10553,8 +10590,10 @@ async_datatype_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
 
     args->dt               = parent_obj->under_object;
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -10609,7 +10648,7 @@ async_datatype_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -10645,7 +10684,7 @@ async_datatype_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *p
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -10899,7 +10938,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -10983,8 +11022,10 @@ async_datatype_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async
 
     args->obj              = parent_obj->under_object;
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -11039,7 +11080,7 @@ async_datatype_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -11075,7 +11116,7 @@ async_datatype_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -11329,7 +11370,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -11413,8 +11454,10 @@ async_datatype_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -11469,7 +11512,7 @@ async_datatype_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -11505,7 +11548,7 @@ async_datatype_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -11756,7 +11799,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -11839,8 +11882,10 @@ async_datatype_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
     }
 
     args->dt               = parent_obj->under_object;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -11894,7 +11939,7 @@ async_datatype_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -11937,7 +11982,7 @@ async_datatype_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
     aid->start_abt_push = true;
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -12208,7 +12253,7 @@ done:
     args->name = NULL;
     if(args->fcpl_id > 0)    H5Pclose(args->fcpl_id);
     if(args->fapl_id > 0)    H5Pclose(args->fapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -12314,10 +12359,11 @@ async_file_create(async_instance_t* aid, const char *name, unsigned flags, hid_t
         args->fapl_id = H5Pcopy(fapl_id);
     else
         args->fapl_id = H5P_DEFAULT;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
     else
-        args->dxpl_id = H5P_DEFAULT;
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
+
     args->req              = req;
 
     if (req) {
@@ -12393,7 +12439,7 @@ async_file_create(async_instance_t* aid, const char *name, unsigned flags, hid_t
         push_task_to_abt_pool(&aid->qhead, aid->pool);
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -12668,7 +12714,7 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->fapl_id > 0)    H5Pclose(args->fapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -12770,10 +12816,10 @@ async_file_open(task_list_qtype qtype, async_instance_t* aid, const char *name, 
         args->fapl_id = H5Pcopy(fapl_id);
     else
         args->fapl_id = H5P_DEFAULT;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
     else
-        args->dxpl_id = H5P_DEFAULT;
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -12852,7 +12898,7 @@ async_file_open(task_list_qtype qtype, async_instance_t* aid, const char *name, 
         push_task_to_abt_pool(&aid->qhead, aid->pool);
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -13107,7 +13153,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -13191,8 +13237,10 @@ async_file_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
 
     args->file             = parent_obj->under_object;
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -13247,7 +13295,7 @@ async_file_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -13283,7 +13331,7 @@ async_file_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -13537,7 +13585,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -13621,8 +13669,10 @@ async_file_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     args->file             = parent_obj->under_object;
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -13677,7 +13727,7 @@ async_file_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -13713,7 +13763,7 @@ async_file_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -13967,7 +14017,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -14052,8 +14102,10 @@ async_file_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     args->file             = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -14108,7 +14160,7 @@ async_file_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -14141,7 +14193,7 @@ async_file_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
         push_task_to_abt_pool(&aid->qhead, aid->pool);
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -14403,7 +14455,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -14526,8 +14578,10 @@ async_file_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     }
 
     args->file             = parent_obj->under_object;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     // Retrieve current library state
@@ -14570,7 +14624,7 @@ async_file_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     parent_obj->close_task = async_task;
 
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -14610,7 +14664,7 @@ wait:
     aid->start_abt_push = true;
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -14868,10 +14922,10 @@ done:
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
     free(args->name);
     args->name = NULL;
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
     if(args->gcpl_id > 0)    H5Pclose(args->gcpl_id);
     if(args->gapl_id > 0)    H5Pclose(args->gapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -14968,14 +15022,18 @@ async_group_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_l
     dup_loc_param(args->loc_params, loc_params);
     if (NULL != name)
         args->name = strdup(name);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
+    else
+        args->lcpl_id = H5P_LINK_CREATE_DEFAULT;
     if(gcpl_id > 0)
         args->gcpl_id = H5Pcopy(gcpl_id);
     if(gapl_id > 0)
         args->gapl_id = H5Pcopy(gapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -15032,7 +15090,7 @@ async_group_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_l
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -15068,7 +15126,7 @@ async_group_create(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_l
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -15327,7 +15385,7 @@ done:
     free(args->name);
     args->name = NULL;
     if(args->gapl_id > 0)    H5Pclose(args->gapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -15426,8 +15484,10 @@ async_group_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc
         args->name = strdup(name);
     if(gapl_id > 0)
         args->gapl_id = H5Pcopy(gapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -15484,7 +15544,7 @@ async_group_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -15520,7 +15580,7 @@ async_group_open(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -15774,7 +15834,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -15858,8 +15918,10 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
 
     args->obj              = parent_obj->under_object;
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -15914,7 +15976,7 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -15950,7 +16012,7 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -16204,7 +16266,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -16288,8 +16350,10 @@ async_group_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
 
     args->obj              = parent_obj->under_object;
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -16344,7 +16408,7 @@ async_group_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -16380,7 +16444,7 @@ async_group_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -16634,7 +16698,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -16718,8 +16782,10 @@ async_group_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -16774,7 +16840,7 @@ async_group_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -16810,7 +16876,7 @@ async_group_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t 
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -17063,7 +17129,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -17148,8 +17214,10 @@ async_group_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     }
 
     args->grp              = parent_obj->under_object;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -17511,9 +17579,9 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
     if(args->lapl_id > 0)    H5Pclose(args->lapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -17609,12 +17677,16 @@ async_link_create(task_list_qtype qtype, async_instance_t* aid, H5VL_link_create
     args->obj              = parent_obj->under_object;
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
+    else
+        args->lcpl_id = H5P_LINK_CREATE_DEFAULT;
     if(lapl_id > 0)
         args->lapl_id = H5Pcopy(lapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -17672,7 +17744,7 @@ async_link_create(task_list_qtype qtype, async_instance_t* aid, H5VL_link_create
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -17708,7 +17780,7 @@ async_link_create(task_list_qtype qtype, async_instance_t* aid, H5VL_link_create
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -17961,9 +18033,9 @@ done:
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params1);
     free_loc_param((H5VL_loc_params_t*)args->loc_params2);
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
     if(args->lapl_id > 0)    H5Pclose(args->lapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -18051,12 +18123,16 @@ async_link_copy(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
     args->dst_obj          = parent_obj2->under_object;
     args->loc_params2 = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params2));
     dup_loc_param(args->loc_params2, loc_params2);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
+    else
+        args->lcpl_id = H5P_LINK_CREATE_DEFAULT;
     if(lapl_id > 0)
         args->lapl_id = H5Pcopy(lapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -18110,7 +18186,7 @@ async_link_copy(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -18146,7 +18222,7 @@ async_link_copy(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -18399,9 +18475,9 @@ done:
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params1);
     free_loc_param((H5VL_loc_params_t*)args->loc_params2);
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
     if(args->lapl_id > 0)    H5Pclose(args->lapl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -18489,12 +18565,14 @@ async_link_move(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
     args->dst_obj          = parent_obj2->under_object;
     args->loc_params2 = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params2));
     dup_loc_param(args->loc_params2, loc_params2);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
     if(lapl_id > 0)
         args->lapl_id = H5Pcopy(lapl_id);
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -18548,7 +18626,7 @@ async_link_move(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -18584,7 +18662,7 @@ async_link_move(async_instance_t* aid, H5VL_async_t *parent_obj, const H5VL_loc_
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -18839,7 +18917,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -18925,8 +19003,10 @@ async_link_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -18981,7 +19061,7 @@ async_link_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -19017,7 +19097,7 @@ async_link_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -19275,7 +19355,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -19361,8 +19441,10 @@ async_link_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -19417,7 +19499,7 @@ async_link_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -19453,7 +19535,7 @@ async_link_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -19707,7 +19789,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -19791,8 +19873,10 @@ async_link_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -19847,7 +19931,7 @@ async_link_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -19883,7 +19967,7 @@ async_link_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -20139,7 +20223,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -20238,8 +20322,10 @@ async_object_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->opened_type      = opened_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -20296,7 +20382,7 @@ async_object_open(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -20590,8 +20676,8 @@ done:
     free(args->dst_name);
     args->dst_name = NULL;
     if(args->ocpypl_id > 0)    H5Pclose(args->ocpypl_id);
-    if(args->lcpl_id > 0)    H5Pclose(args->lcpl_id);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->lcpl_id != H5P_LINK_CREATE_DEFAULT)    H5Pclose(args->lcpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -20685,10 +20771,14 @@ async_object_copy(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
         args->dst_name = strdup(dst_name);
     if(ocpypl_id > 0)
         args->ocpypl_id = H5Pcopy(ocpypl_id);
-    if(lcpl_id > 0)
+    if(lcpl_id != H5P_LINK_CREATE_DEFAULT)
         args->lcpl_id = H5Pcopy(lcpl_id);
-    if(dxpl_id > 0)
+    else
+        args->lcpl_id = H5P_LINK_CREATE_DEFAULT;
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
 
     if (req) {
@@ -20742,7 +20832,7 @@ async_object_copy(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -20778,7 +20868,7 @@ async_object_copy(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -21036,7 +21126,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -21122,8 +21212,10 @@ async_object_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->get_type         = get_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -21219,7 +21311,7 @@ async_object_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -21414,17 +21506,19 @@ async_object_specific_fn(void *foo)
     /* Aquire async obj mutex and set the obj */
     assert(task->async_obj->obj_mutex);
     assert(task->async_obj->magic == ASYNC_MAGIC);
-    while (1) {
-        if (ABT_mutex_trylock(task->async_obj->obj_mutex) == ABT_SUCCESS) {
-            break;
+    if (args->specific_type != H5VL_OBJECT_VISIT) {
+        while (1) {
+            if (ABT_mutex_trylock(task->async_obj->obj_mutex) == ABT_SUCCESS) {
+                is_lock = 1;
+                break;
+            }
+            else {
+                fprintf(stderr,"  [ASYNC ABT DBG] %s error with try_lock\n", __func__);
+                break;
+            }
+            usleep(1000);
         }
-        else {
-            fprintf(stderr,"  [ASYNC ABT DBG] %s error with try_lock\n", __func__);
-            break;
-        }
-        usleep(1000);
     }
-    is_lock = 1;
 
     // Restore previous library state
     assert(task->h5_state);
@@ -21474,7 +21568,7 @@ done:
 #endif
 
     free_loc_param((H5VL_loc_params_t*)args->loc_params);
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -21560,8 +21654,10 @@ async_object_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
     args->loc_params = (H5VL_loc_params_t*)calloc(1, sizeof(*loc_params));
     dup_loc_param(args->loc_params, loc_params);
     args->specific_type    = specific_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -21616,7 +21712,7 @@ async_object_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -21652,7 +21748,7 @@ async_object_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -21906,7 +22002,7 @@ done:
     double time5 = get_elapsed_time(&timer4, &timer5);
 #endif
 
-    if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
+    if(args->dxpl_id != H5P_DATASET_XFER_DEFAULT)    H5Pclose(args->dxpl_id);
 #ifdef ENABLE_TIMING
     gettimeofday(&timer6, NULL);
     double time6 = get_elapsed_time(&timer5, &timer6);
@@ -21990,8 +22086,10 @@ async_object_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
 
     args->obj              = parent_obj->under_object;
     args->opt_type         = opt_type;
-    if(dxpl_id > 0)
+    if(dxpl_id != H5P_DATASET_XFER_DEFAULT)
         args->dxpl_id = H5Pcopy(dxpl_id);
+    else
+        args->dxpl_id = H5P_DATASET_XFER_DEFAULT;
     args->req              = req;
     va_copy(args->arguments, arguments);
 
@@ -22046,7 +22144,7 @@ async_object_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
     parent_obj->task_cnt++;
     parent_obj->pool_ptr = &aid->pool;
     /* Check if its parent has valid object */
-    if (parent_obj->is_obj_valid != 1) {
+    if (NULL == parent_obj->under_object) {
         if (NULL != parent_obj->create_task) {
             add_task_to_queue(&aid->qhead, async_task, DEPENDENT);
         }
@@ -22082,7 +22180,7 @@ async_object_optional(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
 
     /* Wait if blocking is needed */
     if (is_blocking) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
         if (H5TSmutex_release(&mutex_count) < 0) {
@@ -23238,7 +23336,7 @@ H5VL_async_datatype_close(void *dt, hid_t dxpl_id, void **req)
     printf("------- ASYNC VOL DATATYPE Close\n");
 #endif
 
-    assert(o->under_object);
+    /* assert(o->under_object); */
 
     if ((ret_value = H5is_library_terminating(&is_term)) < 0 )
         fprintf(stderr,"  [ASYNC VOL ERROR] with H5is_library_terminating\n");
