@@ -849,6 +849,7 @@ static herr_t H5VL_async_object_optional(void *obj, H5VL_object_optional_t opt_t
 
 /* Container/connector introspection callbacks */
 static herr_t H5VL_async_introspect_get_conn_cls(void *obj, H5VL_get_conn_lvl_t lvl, const H5VL_class_t **conn_cls);
+static herr_t H5VL_async_introspect_get_cap_flags(const void *info, unsigned *cap_flags);
 static herr_t H5VL_async_introspect_opt_query(void *obj, H5VL_subclass_t cls, int opt_type, uint64_t *flags);
 
 /* Async request callbacks */
@@ -883,7 +884,7 @@ static const H5VL_class_t H5VL_async_g = {
     (H5VL_class_value_t)H5VL_ASYNC_VALUE,    /* value        */
     H5VL_ASYNC_NAME,                         /* name         */
     H5VL_ASYNC_VERSION,                      /* connector version */
-    0,                                       /* capability flags */
+    H5VL_CAP_FLAG_ASYNC,                     /* capability flags */
     H5VL_async_init,                         /* initialize   */
     H5VL_async_term,                         /* terminate    */
     {   /* info_cls */
@@ -962,6 +963,7 @@ static const H5VL_class_t H5VL_async_g = {
     },
     {   /* introspect_cls */
         H5VL_async_introspect_get_conn_cls,  /* get_conn_cls */
+        H5VL_async_introspect_get_cap_flags, /* get_cap_flags */
         H5VL_async_introspect_opt_query,     /* opt_query */
     },
     {   /* request_cls */
@@ -23732,6 +23734,41 @@ H5VL_async_file_create(const char *name, unsigned flags, hid_t fcpl_id,
     /* Get copy of our VOL info from FAPL */
     H5Pget_vol_info(fapl_id, (void **)&info);
 
+/* Check for threadsafe initialization of MPI, if built with MPI compiler
+ * and the FAPL indicates using the MPI-IO VFD to access the file.
+ */
+#ifdef MPI_VERSION
+{
+    unsigned cap_flags = 0;
+
+    /* Query the capability flags for the underlying VOL connector */
+    if (H5VLintrospect_get_cap_flags(info->under_vol_info, info->under_vol_id, &cap_flags) < 0)
+        return NULL;
+
+    /* Querying for the VFD is only meaninful when using the native VOL connector */
+    if ((cap_flags & H5VL_CAP_FLAG_NATIVE_FILES) > 0) {
+        hid_t vfd_id;       /* VFD for file */
+
+        /* Retrieve the ID for the VFD */
+        if ((vfd_id = H5Pget_driver(fapl_id)) < 0)
+            return NULL;
+
+        /* Check for MPI-IO VFD */
+        if (H5FD_MPIO == vfd_id) {
+            int mpi_thread_lvl = -1;
+
+            /* Check for MPI thread level */
+            if (MPI_SUCCESS != MPI_Query_thread(&mpi_thread_lvl))
+                return NULL;
+
+            /* We require MPI_THREAD_MULTIPLE to operate correctly */
+            if (MPI_THREAD_MULTIPLE != mpi_thread_lvl)
+                return NULL;
+        } /* end if */
+    } /* end if */
+}
+#endif /* MPI_VERSION */
+
     /* Copy the FAPL */
     under_fapl_id = H5Pcopy(fapl_id);
 
@@ -23776,6 +23813,41 @@ H5VL_async_file_open(const char *name, unsigned flags, hid_t fapl_id,
 
     /* Get copy of our VOL info from FAPL */
     H5Pget_vol_info(fapl_id, (void **)&info);
+
+/* Check for threadsafe initialization of MPI, if built with MPI compiler
+ * and the FAPL indicates using the MPI-IO VFD to access the file.
+ */
+#ifdef MPI_VERSION
+{
+    unsigned cap_flags = 0;
+
+    /* Query the capability flags for the underlying VOL connector */
+    if (H5VLintrospect_get_cap_flags(info->under_vol_info, info->under_vol_id, &cap_flags) < 0)
+        return NULL;
+
+    /* Querying for the VFD is only meaninful when using the native VOL connector */
+    if ((cap_flags & H5VL_CAP_FLAG_NATIVE_FILES) > 0) {
+        hid_t vfd_id;       /* VFD for file */
+
+        /* Retrieve the ID for the VFD */
+        if ((vfd_id = H5Pget_driver(fapl_id)) < 0)
+            return NULL;
+
+        /* Check for MPI-IO VFD */
+        if (H5FD_MPIO == vfd_id) {
+            int mpi_thread_lvl = -1;
+
+            /* Check for MPI thread level */
+            if (MPI_SUCCESS != MPI_Query_thread(&mpi_thread_lvl))
+                return NULL;
+
+            /* We require MPI_THREAD_MULTIPLE to operate correctly */
+            if (MPI_THREAD_MULTIPLE != mpi_thread_lvl)
+                return NULL;
+        } /* end if */
+    } /* end if */
+}
+#endif /* MPI_VERSION */
 
     /* Copy the FAPL */
     under_fapl_id = H5Pcopy(fapl_id);
@@ -24618,6 +24690,37 @@ H5VL_async_introspect_get_conn_cls(void *obj, H5VL_get_conn_lvl_t lvl,
 
 
 /*-------------------------------------------------------------------------
+ * Function:    H5VL_async_introspect_get_cap_flags
+ *
+ * Purpose:     Query the capability flags for this connector and any
+ *              underlying connector(s).
+ *
+ * Return:      SUCCEED / FAIL
+ *
+ *-------------------------------------------------------------------------
+ */
+herr_t
+H5VL_async_introspect_get_cap_flags(const void *_info, unsigned *cap_flags)
+{
+    const H5VL_async_info_t *info = (const H5VL_async_info_t *)_info;
+    herr_t                          ret_value;
+
+#ifdef ENABLE_ASYNC_LOGGING
+    printf("------- ASYNC VOL INTROSPECT GetCapFlags\n");
+#endif
+
+    /* Invoke the query on the underlying VOL connector */
+    ret_value = H5VLintrospect_get_cap_flags(info->under_vol_info, info->under_vol_id, cap_flags);
+
+    /* Bitwise OR our capability flags in */
+    if (ret_value >= 0)
+        *cap_flags |= H5VL_async_g.cap_flags;
+
+    return ret_value;
+} /* end H5VL_async_introspect_get_cap_flags() */
+
+
+/*-------------------------------------------------------------------------
  * Function:    H5VL_async_introspect_opt_query
  *
  * Purpose:     Query if an optional operation is supported by this connector
@@ -24847,122 +24950,7 @@ H5VL_async_request_specific(void *obj, H5VL_request_specific_t specific_type,
     printf("------- ASYNC VOL REQUEST Specific\n");
 #endif
 
-    if(H5VL_REQUEST_WAITANY == specific_type ||
-            H5VL_REQUEST_WAITSOME == specific_type ||
-            H5VL_REQUEST_WAITALL == specific_type) {
-        va_list tmp_arguments;
-        size_t req_count;
-
-        /* Sanity check */
-        assert(obj == NULL);
-
-        /* Get enough info to call the underlying connector */
-        va_copy(tmp_arguments, arguments);
-        req_count = va_arg(tmp_arguments, size_t);
-
-        /* Can only use a request to invoke the underlying VOL connector when there's >0 requests */
-        if(req_count > 0) {
-            void **req_array;
-            void **under_req_array;
-            uint64_t timeout;
-            H5VL_async_t *o;
-            size_t u;               /* Local index variable */
-
-            /* Get the request array */
-            req_array = va_arg(tmp_arguments, void **);
-
-            /* Get a request to use for determining the underlying VOL connector */
-            o = (H5VL_async_t *)req_array[0];
-
-            /* Create array of underlying VOL requests */
-            under_req_array = (void **)malloc(req_count * sizeof(void **));
-            for(u = 0; u < req_count; u++)
-                under_req_array[u] = ((H5VL_async_t *)req_array[u])->under_object;
-
-            /* Remove the timeout value from the vararg list (it's used in all the calls below) */
-            timeout = va_arg(tmp_arguments, uint64_t);
-
-            /* Release requests that have completed */
-            if(H5VL_REQUEST_WAITANY == specific_type) {
-                size_t *idx;          /* Pointer to the index of completed request */
-                H5VL_request_status_t *status;  /* Pointer to the request's status */
-
-                /* Retrieve the remaining arguments */
-                idx = va_arg(tmp_arguments, size_t *);
-                assert(*idx <= req_count);
-                status = va_arg(tmp_arguments, H5VL_request_status_t *);
-
-                /* Reissue the WAITANY 'request specific' call */
-                ret_value = H5VLrequest_specific_vararg(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, idx, status);
-
-                /* Release the completed request, if it completed */
-                if(ret_value >= 0 && *status != H5VL_REQUEST_STATUS_IN_PROGRESS) {
-                    H5VL_async_t *tmp_o;
-
-                    tmp_o = (H5VL_async_t *)req_array[*idx];
-                    H5VL_async_free_obj(tmp_o);
-                } /* end if */
-            } /* end if */
-            else if(H5VL_REQUEST_WAITSOME == specific_type) {
-                size_t *outcount;               /* # of completed requests */
-                unsigned *array_of_indices;     /* Array of indices for completed requests */
-                H5VL_request_status_t *array_of_statuses; /* Array of statuses for completed requests */
-
-                /* Retrieve the remaining arguments */
-                outcount = va_arg(tmp_arguments, size_t *);
-                assert(*outcount <= req_count);
-                array_of_indices = va_arg(tmp_arguments, unsigned *);
-                array_of_statuses = va_arg(tmp_arguments, H5VL_request_status_t *);
-
-                /* Reissue the WAITSOME 'request specific' call */
-                ret_value = H5VLrequest_specific_vararg(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, outcount, array_of_indices, array_of_statuses);
-
-                /* If any requests completed, release them */
-                if(ret_value >= 0 && *outcount > 0) {
-                    unsigned *idx_array;    /* Array of indices of completed requests */
-
-                    /* Retrieve the array of completed request indices */
-                    idx_array = va_arg(tmp_arguments, unsigned *);
-
-                    /* Release the completed requests */
-                    for(u = 0; u < *outcount; u++) {
-                        H5VL_async_t *tmp_o;
-
-                        tmp_o = (H5VL_async_t *)req_array[idx_array[u]];
-                        H5VL_async_free_obj(tmp_o);
-                    } /* end for */
-                } /* end if */
-            } /* end else-if */
-            else {      /* H5VL_REQUEST_WAITALL == specific_type */
-                H5VL_request_status_t *array_of_statuses; /* Array of statuses for completed requests */
-
-                /* Retrieve the remaining arguments */
-                array_of_statuses = va_arg(tmp_arguments, H5VL_request_status_t *);
-
-                /* Reissue the WAITALL 'request specific' call */
-                ret_value = H5VLrequest_specific_vararg(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, array_of_statuses);
-
-                /* Release the completed requests */
-                if(ret_value >= 0) {
-                    for(u = 0; u < req_count; u++) {
-                        if(array_of_statuses[u] != H5VL_REQUEST_STATUS_IN_PROGRESS) {
-                            H5VL_async_t *tmp_o;
-
-                            tmp_o = (H5VL_async_t *)req_array[u];
-                            H5VL_async_free_obj(tmp_o);
-                        } /* end if */
-                    } /* end for */
-                } /* end if */
-            } /* end else */
-
-            /* Release array of requests for underlying connector */
-            free(under_req_array);
-        } /* end if */
-
-        /* Finish use of copied vararg list */
-        va_end(tmp_arguments);
-    } /* end if */
-    else if(H5VL_REQUEST_GET_ERR_STACK == specific_type) {
+    if(H5VL_REQUEST_GET_ERR_STACK == specific_type) {
         H5VL_async_t *async_obj;
         async_task_t *task;
         hid_t *err_stack_id_ptr;

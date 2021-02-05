@@ -2,17 +2,23 @@ ASYNC_DIR = /gpfs/alpine/world-shared/csc300/gnu_build/hpc-io/vol-async/src
 HDF5_DIR  = /gpfs/alpine/csc300/world-shared/gnu_build/hpc-io/hdf5/async_optional_build/hdf5
 ABT_DIR = /gpfs/alpine/world-shared/csc300/gnu_build/hpc-io/vol-async/argobots/build
 
-DYNLIB = libh5async.so
 STATLIB = libasynchdf5.a
+# Uncomment this line Linux builds:
+DYNLIB = libh5async.so
+# Uncomment this line MacOS builds:
+# DYNLIB = libh5async.dylib
 
 #CC = cc
 #CC = gcc-9
 CC = mpicc
 
-DEBUG = -g -O0
+# These lines may need to be adjusted for your compiler environment:
+DEBUG = -g -O0 #-Wall
 CFLAGS = $(DEBUG) -I$(ABT_DIR)/include -I$(ASYNC_DIR) -I$(HDF5_DIR)/include
-#-Wall
+
+# Uncomment this line Linux builds:
 LDFLAGS = $(DEBUG) -L$(ASYNC_DIR) -L$(ABT_DIR)/lib -L$(HDF5_DIR)/lib -Wl,-rpath=$(ASYNC_DIR) -Wl,-rpath=$(ABT_DIR)/lib -Wl,-rpath=$(HDF5_DIR)/lib -labt -lhdf5 -lh5async -lasynchdf5
+# Uncomment this line MacOS builds:
 # LDFLAGS = $(DEBUG) -L$(ASYNC_DIR) -L$(ABT_DIR)/lib -L$(HDF5_DIR)/lib -labt -lhdf5 -lasynchdf5 -lh5async 
 
 SRC = async_test_serial.c async_test_serial2.c \
@@ -20,8 +26,8 @@ SRC = async_test_serial.c async_test_serial2.c \
     async_test_parallel.c async_test_parallel2.c async_test_parallel3.c \
     async_test_parallel4.c async_test_parallel5.c \
     async_test_serial_event_set.c async_test_serial_error_stack.c \
-    async_test_serial_event_set_error_stack.c async_test_simple.c
-#async_test_no_fclose.c
+    async_test_serial_event_set_error_stack.c
+
 OBJ = $(SRC:.c=.o)
 EXE = $(SRC:.c=.exe)
 DBG = $(SRC:.c=.exe.dSYM)
