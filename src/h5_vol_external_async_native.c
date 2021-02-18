@@ -2036,8 +2036,9 @@ herr_t H5VL_async_file_wait(H5VL_async_t *async_obj)
 void
 H5VL_async_start()
 {
-    if (NULL != async_instance_g->qhead.queue)
-        push_task_to_abt_pool(&async_instance_g->qhead, async_instance_g->pool);
+    async_instance_g->start_abt_push = true;
+    /* if (async_instance_g && NULL != async_instance_g->qhead.queue) */
+    /*     push_task_to_abt_pool(&async_instance_g->qhead, async_instance_g->pool); */
 }
 
 double get_elapsed_time(struct timeval *tstart, struct timeval *tend)
@@ -2366,6 +2367,10 @@ async_attr_create_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -2402,8 +2407,8 @@ async_attr_create_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -2836,6 +2841,10 @@ async_attr_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -2872,8 +2881,8 @@ async_attr_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -3295,6 +3304,10 @@ async_attr_read_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -3327,8 +3340,8 @@ async_attr_read_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -3733,6 +3746,10 @@ async_attr_write_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -3765,8 +3782,8 @@ async_attr_write_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -4184,6 +4201,10 @@ async_attr_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -4219,8 +4240,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -4626,6 +4647,10 @@ async_attr_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -4661,8 +4686,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -5067,6 +5092,10 @@ async_attr_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -5102,8 +5131,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -5507,6 +5536,10 @@ async_attr_close_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -5539,8 +5572,8 @@ async_attr_close_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -5948,6 +5981,10 @@ async_dataset_create_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -5984,8 +6021,8 @@ async_dataset_create_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -6426,6 +6463,10 @@ async_dataset_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -6462,8 +6503,8 @@ async_dataset_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -6890,6 +6931,10 @@ async_dataset_read_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -6922,8 +6967,8 @@ async_dataset_read_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -7342,6 +7387,10 @@ async_dataset_write_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -7377,8 +7426,8 @@ async_dataset_write_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -7900,6 +7949,10 @@ async_dataset_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -7935,8 +7988,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -8340,6 +8393,10 @@ async_dataset_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -8375,8 +8432,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -8780,6 +8837,10 @@ async_dataset_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -8815,8 +8876,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -9220,6 +9281,10 @@ async_dataset_close_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -9252,8 +9317,8 @@ async_dataset_close_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -9670,6 +9735,10 @@ async_datatype_commit_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -9703,8 +9772,8 @@ async_datatype_commit_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -10142,6 +10211,10 @@ async_datatype_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -10178,8 +10251,8 @@ async_datatype_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -10604,6 +10677,10 @@ async_datatype_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -10639,8 +10716,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -11044,6 +11121,10 @@ async_datatype_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -11079,8 +11160,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -11484,6 +11565,10 @@ async_datatype_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -11519,8 +11604,8 @@ async_datatype_optional_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -11924,6 +12009,10 @@ async_datatype_close_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -11956,8 +12045,8 @@ async_datatype_close_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -12216,9 +12305,9 @@ async_file_create_fn(void *foo)
     H5VL_async_info_t *info = NULL;
     async_task_t *task = (async_task_t*)foo;
     async_file_create_args_t *args = (async_file_create_args_t*)(task->args);
-    herr_t status;
+    /* herr_t status; */
     hid_t under_vol_id;
-    uint64_t supported;          /* Whether 'post open' operation is supported by VOL connector */
+    /* uint64_t supported;          /1* Whether 'post open' operation is supported by VOL connector *1/ */
 
 #ifdef ENABLE_TIMING
     struct timeval now_time;
@@ -12343,6 +12432,10 @@ async_file_create_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -12368,24 +12461,24 @@ async_file_create_fn(void *foo)
         goto done;
     }
 
-    /* Check for 'post open' callback */
-    supported = 0;
-    if(H5VLintrospect_opt_query(obj, under_vol_id, H5VL_SUBCLS_FILE, H5VL_NATIVE_FILE_POST_OPEN, &supported) < 0) {
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLintrospect_opt_query failed\n", __func__);
-        goto done;
-    }
-    if(supported & H5VL_OPT_QUERY_SUPPORTED) {
-        /* Make the 'post open' callback */
-        /* Try executing operation, without default error stack handling */
-        H5E_BEGIN_TRY {
-            status = H5VLfile_optional_vararg(obj, under_vol_id, H5VL_NATIVE_FILE_POST_OPEN, args->dxpl_id, NULL);
-        } H5E_END_TRY
-        if ( status < 0 ) {
-            if ((task->err_stack = H5Eget_current_stack()) < 0)
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__);
-            goto done;
-        }
-    } /* end if */
+    /* /1* Check for 'post open' callback *1/ */
+    /* supported = 0; */
+    /* if(H5VLintrospect_opt_query(obj, under_vol_id, H5VL_SUBCLS_FILE, H5VL_NATIVE_FILE_POST_OPEN, &supported) < 0) { */
+    /*     fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLintrospect_opt_query failed\n", __func__); */
+    /*     goto done; */
+    /* } */
+    /* if(supported & H5VL_OPT_QUERY_SUPPORTED) { */
+    /*     /1* Make the 'post open' callback *1/ */
+    /*     /1* Try executing operation, without default error stack handling *1/ */
+    /*     H5E_BEGIN_TRY { */
+    /*         status = H5VLfile_optional_vararg(obj, under_vol_id, H5VL_NATIVE_FILE_POST_OPEN, args->dxpl_id, NULL); */
+    /*     } H5E_END_TRY */
+    /*     if ( status < 0 ) { */
+    /*         if ((task->err_stack = H5Eget_current_stack()) < 0) */
+    /*             fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__); */
+    /*         goto done; */
+    /*     } */
+    /* } /1* end if *1/ */
 
 #ifdef ENABLE_TIMING
     gettimeofday(&timer4, NULL);
@@ -12413,8 +12506,8 @@ async_file_create_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -12681,9 +12774,9 @@ async_file_open_fn(void *foo)
     H5VL_async_info_t *info = NULL;
     async_task_t *task = (async_task_t*)foo;
     async_file_open_args_t *args = (async_file_open_args_t*)(task->args);
-    herr_t status;
+    /* herr_t status; */
     hid_t under_vol_id;
-    uint64_t supported;          /* Whether 'post open' operation is supported by VOL connector */
+    /* uint64_t supported;          /1* Whether 'post open' operation is supported by VOL connector *1/ */
 
 #ifdef ENABLE_TIMING
     struct timeval now_time;
@@ -12808,6 +12901,10 @@ async_file_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -12833,29 +12930,29 @@ async_file_open_fn(void *foo)
         goto done;
     }
 
-    /* Check for 'post open' callback */
-    supported = 0;
-    /* Try executing operation, without default error stack handling */
-    H5E_BEGIN_TRY {
-        status = H5VLintrospect_opt_query(obj, under_vol_id, H5VL_SUBCLS_FILE, H5VL_NATIVE_FILE_POST_OPEN, &supported);
-    } H5E_END_TRY
-    if ( status < 0 ) {
-        if ((task->err_stack = H5Eget_current_stack()) < 0)
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__);
-        goto done;
-    }
-    if(supported & H5VL_OPT_QUERY_SUPPORTED) {
-        /* Make the 'post open' callback */
-        /* Try executing operation, without default error stack handling */
-        H5E_BEGIN_TRY {
-            status = H5VLfile_optional_vararg(obj, under_vol_id, H5VL_NATIVE_FILE_POST_OPEN, args->dxpl_id, NULL);
-        } H5E_END_TRY
-        if ( status < 0 ) {
-            if ((task->err_stack = H5Eget_current_stack()) < 0)
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__);
-            goto done;
-        }
-    } /* end if */
+    /* /1* Check for 'post open' callback *1/ */
+    /* supported = 0; */
+    /* /1* Try executing operation, without default error stack handling *1/ */
+    /* H5E_BEGIN_TRY { */
+    /*     status = H5VLintrospect_opt_query(obj, under_vol_id, H5VL_SUBCLS_FILE, H5VL_NATIVE_FILE_POST_OPEN, &supported); */
+    /* } H5E_END_TRY */
+    /* if ( status < 0 ) { */
+    /*     if ((task->err_stack = H5Eget_current_stack()) < 0) */
+    /*         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__); */
+    /*     goto done; */
+    /* } */
+    /* if(supported & H5VL_OPT_QUERY_SUPPORTED) { */
+    /*     /1* Make the 'post open' callback *1/ */
+    /*     /1* Try executing operation, without default error stack handling *1/ */
+    /*     H5E_BEGIN_TRY { */
+    /*         status = H5VLfile_optional_vararg(obj, under_vol_id, H5VL_NATIVE_FILE_POST_OPEN, args->dxpl_id, NULL); */
+    /*     } H5E_END_TRY */
+    /*     if ( status < 0 ) { */
+    /*         if ((task->err_stack = H5Eget_current_stack()) < 0) */
+    /*             fprintf(stderr,"  [ASYNC ABT ERROR] %s H5Eget_current_stack failed\n", __func__); */
+    /*         goto done; */
+    /*     } */
+    /* } /1* end if *1/ */
 
 #ifdef ENABLE_TIMING
     gettimeofday(&timer4, NULL);
@@ -12883,8 +12980,8 @@ async_file_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -13299,6 +13396,10 @@ async_file_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -13334,8 +13435,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -13739,6 +13840,10 @@ async_file_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -13774,8 +13879,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -14179,6 +14284,10 @@ async_file_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -14214,8 +14323,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -14617,6 +14726,10 @@ async_file_close_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -14660,8 +14773,8 @@ async_file_close_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -15097,6 +15210,10 @@ async_group_create_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -15133,8 +15250,8 @@ async_group_create_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -15567,6 +15684,10 @@ async_group_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -15603,8 +15724,8 @@ async_group_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -16029,6 +16150,10 @@ async_group_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -16064,8 +16189,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -16469,6 +16594,10 @@ async_group_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -16504,8 +16633,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -16909,6 +17038,10 @@ async_group_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -16944,8 +17077,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -17351,6 +17484,10 @@ async_group_close_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -17383,8 +17520,8 @@ async_group_close_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -17805,6 +17942,10 @@ async_link_create_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -17840,8 +17981,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -18266,6 +18407,10 @@ async_link_copy_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -18298,8 +18443,8 @@ async_link_copy_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -18716,6 +18861,10 @@ async_link_move_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -18748,8 +18897,8 @@ async_link_move_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -19164,6 +19313,10 @@ async_link_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -19199,8 +19352,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -19610,6 +19763,10 @@ async_link_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -19645,8 +19802,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -20053,6 +20210,10 @@ async_link_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -20088,8 +20249,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -20493,6 +20654,10 @@ async_object_open_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -20529,8 +20694,8 @@ async_object_open_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -20952,6 +21117,10 @@ async_object_copy_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -20984,8 +21153,8 @@ async_object_copy_fn(void *foo)
 
 done:
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -21413,6 +21582,10 @@ async_object_get_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -21448,8 +21621,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -21863,6 +22036,10 @@ async_object_specific_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -21898,8 +22075,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -22306,6 +22483,10 @@ async_object_optional_fn(void *foo)
 
     // Restore previous library state
     assert(task->h5_state);
+    if (H5VLstart_lib_state() < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLstart_lib_state failed\n", __func__);
+        goto done;
+    }
     if (H5VLrestore_lib_state(task->h5_state) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLrestore_lib_state failed\n", __func__);
         goto done;
@@ -22341,8 +22522,8 @@ done:
     va_end(args->arguments);
 
     fflush(stdout);
-    if(is_lib_state_restored && H5VLreset_lib_state() < 0)
-        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLreset_lib_state failed\n", __func__);
+    if(is_lib_state_restored && H5VLfinish_lib_state() < 0)
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfinish_lib_state failed\n", __func__);
     if (NULL != task->h5_state && H5VLfree_lib_state(task->h5_state) < 0)
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
@@ -23805,7 +23986,7 @@ H5VL_async_file_open(const char *name, unsigned flags, hid_t fapl_id,
     H5VL_async_info_t *info;
     H5VL_async_t *file;
     hid_t under_fapl_id;
-    task_list_qtype qtype = ISOLATED;
+    task_list_qtype qtype = REGULAR;
 
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL FILE Open\n");
@@ -24024,7 +24205,7 @@ H5VL_async_file_optional(void *file, H5VL_file_optional_t opt_type,
 {
     H5VL_async_t *o = (H5VL_async_t *)file;
     herr_t ret_value;
-    task_list_qtype qtype = ISOLATED;
+    task_list_qtype qtype = REGULAR;
 
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL File Optional\n");
@@ -24746,7 +24927,7 @@ H5VL_async_introspect_opt_query(void *obj, H5VL_subclass_t cls,
      */
     if(H5VL_NATIVE_FILE_POST_OPEN == opt_type) {
         if(flags)
-            *flags = 0;
+            *flags = 1;
         ret_value = 0;
     } /* end if */
     else
@@ -24814,7 +24995,7 @@ H5VL_async_request_wait(void *obj, uint64_t timeout, H5VL_request_status_t *stat
     start_time = clock();
 
     do {
-        if (NULL == task->abt_thread) {
+        /* if (NULL == task->abt_thread) { */
             if (task->is_done == 1 || task->magic != TASK_MAGIC) {
                 if(task->err_stack)
                     *status = H5VL_REQUEST_STATUS_FAIL;
@@ -24822,7 +25003,7 @@ H5VL_async_request_wait(void *obj, uint64_t timeout, H5VL_request_status_t *stat
                     *status = H5VL_REQUEST_STATUS_SUCCEED;
                 goto done;
             }
-        }
+        /* } */
 
         if (timeout == H5ES_WAIT_FOREVER && task->eventual) {
             ABT_eventual_wait(task->eventual, NULL);

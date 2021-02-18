@@ -154,7 +154,6 @@ int main(int argc, char *argv[])
         ret = -1;
         goto done;
     }
-    H5free_memory(err_info.api_name);
     if (strcmp("loc_id=0x100000000000000 (file), name=\"Group\", lcpl_id=H5P_DEFAULT, gcpl_id=H5P_DEFAULT, gapl_id=H5P_DEFAULT, es_id=0x1000000000000000 (event set)", err_info.api_args)) {
         fprintf(stderr, "Event set didn't return API name correctly?!?\n");
         ret = -1;
@@ -166,19 +165,17 @@ int main(int argc, char *argv[])
         ret = -1;
         goto done;
     }
-    H5free_memory(err_info.app_file_name);
     if (strcmp("main", err_info.app_func_name)) {
         fprintf(stderr, "Event set didn't return app source function name correctly?!?\n");
         ret = -1;
         goto done;
     }
-    H5free_memory(err_info.app_func_name);
     if (77 != err_info.app_line_num) { // Somewhat fragile
         fprintf(stderr, "Event set didn't return app source line # correctly?!?, got: %u\n", err_info.app_line_num);
         ret = -1;
         goto done;
     }
-    if (2 != err_info.op_ins_count) {
+    if (3 != err_info.op_ins_count) {
         fprintf(stderr, "Event set didn't return op counter correctly?!?\n");
         ret = -1;
         goto done;
@@ -254,13 +251,13 @@ int main(int argc, char *argv[])
     fflush(stdout);
 
     // attribute async API have not been fully implemented, skip the test for now
-    attr0 = H5Acreate(dset0_id, "attr_0", H5T_NATIVE_INT, attr_space, H5P_DEFAULT, H5P_DEFAULT);
+    attr0 = H5Acreate_async(dset0_id, "attr_0", H5T_NATIVE_INT, attr_space, H5P_DEFAULT, H5P_DEFAULT, es1_id);
     if (attr0 < 0) {
         fprintf(stderr, "First attribute create failed\n");
         ret = -1;
         goto done;
     }
-    attr1 = H5Acreate(dset0_id, "attr_1", H5T_NATIVE_INT, attr_space, H5P_DEFAULT, H5P_DEFAULT);
+    attr1 = H5Acreate_async(dset0_id, "attr_1", H5T_NATIVE_INT, attr_space, H5P_DEFAULT, H5P_DEFAULT, es1_id);
     if (attr1 < 0) {
         fprintf(stderr, "Second attribute create failed\n");
         ret = -1;
@@ -269,39 +266,39 @@ int main(int argc, char *argv[])
 
     attr_data0 = 123456;
     attr_data1 = -654321;
-    status = H5Awrite(attr0, H5T_NATIVE_INT, &attr_data0);
+    status = H5Awrite_async(attr0, H5T_NATIVE_INT, &attr_data0, es1_id);
     if (status < 0) {
         fprintf(stderr, "First attribute write failed\n");
         ret = -1;
         goto done;
     }
-    status = H5Awrite(attr1, H5T_NATIVE_INT, &attr_data1);
+    status = H5Awrite_async(attr1, H5T_NATIVE_INT, &attr_data1, es1_id);
     if (status < 0) {
         fprintf(stderr, "Second attribute write failed\n");
         ret = -1;
         goto done;
     }
 
-    status = H5Aread(attr0, H5T_NATIVE_INT, &attr_read_data0);
+    status = H5Aread_async(attr0, H5T_NATIVE_INT, &attr_read_data0, es1_id);
     if (status < 0) {
         fprintf(stderr, "First attribute read failed\n");
         ret = -1;
         goto done;
     }
-    status = H5Aread(attr1, H5T_NATIVE_INT, &attr_read_data1);
+    status = H5Aread_async(attr1, H5T_NATIVE_INT, &attr_read_data1, es1_id);
     if (status < 0) {
         fprintf(stderr, "Second attribute read failed\n");
         ret = -1;
         goto done;
     }
 
-    status = H5Aclose(attr0);
+    status = H5Aclose_async(attr0, es1_id);
     if (status < 0) {
         fprintf(stderr, "First attribute close failed\n");
         ret = -1;
         goto done;
     }
-    status = H5Aclose(attr1);
+    status = H5Aclose_async(attr1, es1_id);
     if (status < 0) {
         fprintf(stderr, "Second attribute close failed\n");
         ret = -1;
