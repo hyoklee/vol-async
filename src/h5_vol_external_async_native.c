@@ -5756,17 +5756,17 @@ async_attr_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *par
            __func__, get_elapsed_time(&args->create_time, &now_time));
 #endif
     if (aid->ex_delay == false) {
-        if (get_n_running_task_in_queue(async_task) == 0)
+        if (get_n_running_task_in_queue(async_task) == 0) {
+            aid->start_abt_push = true;
             push_task_to_abt_pool(&aid->qhead, aid->pool);
+        }
     }
+    /* else { */
+    /*     if (get_n_running_task_in_queue(async_task) == 0) */
+    /*         push_task_to_abt_pool(&aid->qhead, aid->pool); */
 
-    else {
-        if (get_n_running_task_in_queue(async_task) == 0)
-            push_task_to_abt_pool(&aid->qhead, aid->pool);
+    /* } */
 
-    }
-
-    aid->start_abt_push = true;
     /* Wait if blocking is needed */
     if (is_blocking) {
         if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
@@ -7632,6 +7632,8 @@ async_dataset_write(async_instance_t* aid, H5VL_async_t *parent_obj,
             /* fprintf(stderr,"  [ASYNC VOL LOG] %s will gather!\n", __func__); */
             H5Dgather(mem_space_id, buf, mem_type_id, buf_size, args->buf, NULL, NULL);
             hsize_t elem_size =  H5Tget_size(mem_type_id);
+            if (elem_size == 0) 
+                elem_size = 1;
             hsize_t n_elem = (hsize_t)(buf_size/elem_size);
             if (args->mem_space_id > 0) 
                 H5Sclose(args->mem_space_id);
@@ -9506,19 +9508,20 @@ async_dataset_close(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     if (aid->ex_delay == false) {
         if (get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
+        aid->start_abt_push = true;
     }
 
     else {
         if (aid->ex_dclose) {
             if (get_n_running_task_in_queue(async_task) == 0)
                 push_task_to_abt_pool(&aid->qhead, aid->pool);
-
+            aid->start_abt_push = true;
         }
     }
 
-    aid->start_abt_push = true;
     /* Wait if blocking is needed */
     if (is_blocking) {
+        aid->start_abt_push = true;
         if (async_instance_g->start_abt_push || get_n_running_task_in_queue(async_task) == 0)
             push_task_to_abt_pool(&aid->qhead, aid->pool);
 
@@ -12414,7 +12417,7 @@ async_file_create_fn(void *foo)
     fflush(stderr);
 #endif
 
-    async_instance_g->start_abt_push = false;
+    /* async_instance_g->start_abt_push = false; */
 
     /* Aquire async obj mutex and set the obj */
     assert(task->async_obj->obj_mutex);
