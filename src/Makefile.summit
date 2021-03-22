@@ -1,12 +1,12 @@
-HDF5_DIR  = /gpfs/alpine/csc300/world-shared/gnu_build/hpc-io/hdf5/async_optional_build/hdf5
-ABT_DIR = /gpfs/alpine/csc300/world-shared/gnu_build/hpc-io/vol-async/argobots/build
+HDF5_DIR = /gpfs/alpine/csc300/world-shared/xl_build/hpc-io/hdf5/async_optional_build/hdf5
+ABT_DIR = /gpfs/alpine/csc300/world-shared/xl_build/hpc-io/vol-async/argobots/build
 
-# CC = cc
+#CC = cc
 #CC = gcc-9
 CC = mpicc
 
 # These lines may need to be adjusted for your compiler environment:
-DEBUG = -g -O0 
+DEBUG = -g -O0
 #-DENABLE_ASYNC_LOGGING
 CFLAGS = $(DEBUG) -fPIC -I$(ABT_DIR)/include -I$(HDF5_DIR)/include -Wall
 LIBS = -L$(HDF5_DIR)/lib -L$(ABT_DIR)/lib -labt -lhdf5 -lz
@@ -21,7 +21,6 @@ DYNSRC = h5_vol_external_async_native.c
 DYNHDR = h5_vol_external_async_native.h
 DYNOBJ = $(DYNSRC:.c=.o)
 DYNPCH = $(DYNHDR:.h=.h.gch)
-
 # Uncomment this line Linux builds:
 DYNLIB = libh5async.so
 # Uncomment this line MacOS builds:

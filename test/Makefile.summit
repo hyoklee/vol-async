@@ -1,6 +1,6 @@
-ASYNC_DIR = /gpfs/alpine/world-shared/csc300/gnu_build/hpc-io/vol-async/src
-HDF5_DIR  = /gpfs/alpine/csc300/world-shared/gnu_build/hpc-io/hdf5/async_optional_build/hdf5
-ABT_DIR = /gpfs/alpine/world-shared/csc300/gnu_build/hpc-io/vol-async/argobots/build
+ASYNC_DIR = /gpfs/alpine/csc300/world-shared/xl_build/hpc-io/vol-async/src
+HDF5_DIR = /gpfs/alpine/csc300/world-shared/xl_build/hpc-io/hdf5/async_optional_build/hdf5
+ABT_DIR = /gpfs/alpine/csc300/world-shared/xl_build/hpc-io/vol-async/argobots/build
 
 STATLIB = libasynchdf5.a
 # Uncomment this line Linux builds:
@@ -13,7 +13,7 @@ DYNLIB = libh5async.so
 CC = mpicc
 
 # These lines may need to be adjusted for your compiler environment:
-DEBUG = -g -O0 -Wall
+DEBUG = -g -O0 #-Wall
 CFLAGS = $(DEBUG) -I$(ABT_DIR)/include -I$(ASYNC_DIR) -I$(HDF5_DIR)/include
 
 # Uncomment this line Linux builds:
@@ -27,7 +27,7 @@ SRC = async_test_serial.c async_test_serial2.c \
     async_test_parallel4.c async_test_parallel5.c \
     async_test_serial_event_set.c async_test_serial_error_stack.c \
     async_test_serial_event_set_error_stack.c
-
+#async_test_no_fclose.c
 OBJ = $(SRC:.c=.o)
 EXE = $(SRC:.c=.exe)
 DBG = $(SRC:.c=.exe.dSYM)
