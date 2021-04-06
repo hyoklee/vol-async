@@ -69,6 +69,7 @@
 
 /* Default interval between checking for HDF5 global lock */
 #define ASYNC_ATTEMPT_CHECK_INTERVAL 1
+#define ASYNC_APP_CHECK_SLEEP_TIME 500
 
 /* Magic #'s for memory structures */
 #define ASYNC_MAGIC 10242048
@@ -177,6 +178,7 @@ typedef struct async_instance_t {
     bool                ex_gclose;           /* Delay background thread execution until group close */
     bool                ex_dclose;           /* Delay background thread execution until dset close */
     bool                start_abt_push;      /* Start pushing tasks to Argobots pool */
+    int                 sleep_time;
 } async_instance_t;
 
 typedef struct async_attr_create_args_t {
@@ -989,6 +991,7 @@ async_instance_init(int backing_thread_count)
         hg_ret = -1;
         goto done;
     }
+    aid->sleep_time = ASYNC_APP_CHECK_SLEEP_TIME;
 
     abt_ret = ABT_mutex_create(&aid->qhead.head_mutex);
     if (ABT_SUCCESS != abt_ret) {
@@ -1065,8 +1068,8 @@ async_instance_init(int backing_thread_count)
     aid->num_xstreams = backing_thread_count;
     aid->progress_scheds = progress_scheds;
     aid->nfopen       = 0;
-    aid->ex_delay     = true;
-    aid->ex_fclose    = true;
+    aid->ex_delay     = false;
+    aid->ex_fclose    = false;
     aid->ex_gclose    = false;
     aid->ex_dclose    = false;
     aid->start_abt_push = false;
@@ -1735,6 +1738,64 @@ static void free_loc_param(H5VL_loc_params_t *loc_params)
     }
 }
 
+herr_t H5VL_async_object_wait(H5VL_async_t *async_obj)
+{
+    /* herr_t ret_value; */
+    async_task_t *task_iter;
+    /* ABT_task_state state; */
+    /* ABT_thread_state thread_state; */
+    hbool_t acquired = false;
+    unsigned int mutex_count = 1;
+    hbool_t tmp = async_instance_g->start_abt_push;
+
+    async_instance_g->start_abt_push = true;
+
+    if (get_n_running_task_in_queue_obj(async_obj) == 0 )
+        push_task_to_abt_pool(&async_instance_g->qhead, *async_obj->pool_ptr);
+
+    if (H5TSmutex_release(&mutex_count) < 0)
+        fprintf(stderr, "  [ASYNC VOL ERROR] %s with H5TSmutex_release\n", __func__);
+
+    // Check for all tasks on this dset of a file
+
+    if (ABT_mutex_lock(async_obj->file_async_obj->file_task_list_mutex) != ABT_SUCCESS) {
+        fprintf(stderr,"  [ASYNC VOL ERROR] %s with ABT_mutex_lock\n", __func__);
+        return -1;
+    }
+    DL_FOREACH2(async_obj->file_task_list_head, task_iter, file_list_next) {
+        /* if (ABT_mutex_lock(async_obj->obj_mutex) != ABT_SUCCESS) { */
+        /*     fprintf(stderr,"  [ASYNC VOL ERROR] %s ABT_mutex_lock failed\n", __func__); */
+        /*     return -1; */
+        /* } */
+
+        if (task_iter->async_obj == async_obj) {
+            if (task_iter->is_done != 1) {
+                ABT_eventual_wait(task_iter->eventual, NULL);
+            }
+        }
+        /* if (ABT_mutex_unlock(async_obj->obj_mutex) != ABT_SUCCESS) */
+        /*     fprintf(stderr,"  [ASYNC VOL ERROR] %s ABT_mutex_lock failed\n", __func__); */
+
+    }
+
+    if (ABT_mutex_unlock(async_obj->file_async_obj->file_task_list_mutex) != ABT_SUCCESS) {
+        fprintf(stderr,"  [ASYNC VOL ERROR] %s with ABT_mutex_unlock\n", __func__);
+        return -1;
+    }
+    while (false == acquired) {
+        if (H5TSmutex_acquire(mutex_count, &acquired) < 0)
+            fprintf(stderr, "  [ASYNC VOL ERROR] %s with H5TSmutex_acquire\n", __func__);
+    }
+
+#ifdef ENABLE_DBG_MSG
+    fprintf(stderr, "  [ASYNC VOL DBG] %s setting start_abt_push false!\n", __func__);
+#endif
+    async_instance_g->start_abt_push = tmp;
+
+    return 0;
+}
+
+
 herr_t H5VL_async_dataset_wait(H5VL_async_t *async_obj)
 {
     /* herr_t ret_value; */
@@ -1884,8 +1945,8 @@ H5VL_async_start()
 {
     assert(async_instance_g);
     async_instance_g->start_abt_push = true;
-    /* if (async_instance_g && NULL != async_instance_g->qhead.queue) */
-    /*     push_task_to_abt_pool(&async_instance_g->qhead, async_instance_g->pool); */
+    if (async_instance_g && NULL != async_instance_g->qhead.queue)
+        push_task_to_abt_pool(&async_instance_g->qhead, async_instance_g->pool);
     return 0;
 }
 
@@ -2041,6 +2102,75 @@ H5VL_async_start()
 /*     /1* free(cpuset); *1/ */
 /* } */
 
+static int
+check_app_acquire_mutex(async_task_t *task, unsigned int *mutex_count, hbool_t *acquired)
+{
+    unsigned int attempt_count, new_attempt_count;
+
+    while (*acquired == false) {
+        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
+            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
+            return -1;
+        }
+        if (H5TSmutex_acquire(*mutex_count, acquired) < 0) {
+            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
+            return -1;
+        }
+        if (false == *acquired) {
+#ifdef ENABLE_DBG_MSG
+            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
+#endif
+            if(async_instance_g->sleep_time > 0)
+                usleep(async_instance_g->sleep_time);
+            continue;
+        }
+        // No need to check and wait when start_abt_push flag is turned on
+        if (async_instance_g->start_abt_push)
+            goto done;
+
+        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
+            if(async_instance_g->sleep_time > 0)
+                usleep(async_instance_g->sleep_time);
+            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
+                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
+                return -1;
+            }
+            if (new_attempt_count > attempt_count) {
+                if (H5TSmutex_release(mutex_count) < 0) {
+                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
+                }
+                *acquired = false;
+            }
+            else {
+                break;
+            }
+            attempt_count = new_attempt_count;
+            task->async_obj->file_async_obj->attempt_check_cnt++;
+            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
+        }
+    }
+
+done:
+    return 0;
+}
+
+static void 
+check_app_wait()
+{
+#ifdef ENABLE_WAIT_FLAG
+    hbool_t has_wait = false;
+    if (H5TSmutex_get_wait_flag(&has_wait) < 0) {
+        fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
+        return;
+    }
+    // If the application thread is waiting, double the current sleep time for next status check
+    if (has_wait)
+        async_instance_g->sleep_time *= 2;
+
+#endif
+    return;
+}
+
 static int 
 check_parent_task(H5VL_async_t *parent_obj)
 {
@@ -2057,8 +2187,7 @@ async_attr_create_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -2112,42 +2241,8 @@ async_attr_create_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -2228,6 +2323,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -2445,8 +2541,7 @@ async_attr_open_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -2500,42 +2595,8 @@ async_attr_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -2613,6 +2674,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -2817,8 +2879,7 @@ async_attr_read_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -2873,42 +2934,8 @@ async_attr_read_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -2978,6 +3005,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -3164,8 +3192,7 @@ async_attr_write_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -3220,42 +3247,8 @@ async_attr_write_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -3326,6 +3319,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -3525,8 +3519,7 @@ async_attr_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -3581,42 +3574,8 @@ async_attr_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -3688,6 +3647,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -3874,8 +3834,7 @@ async_attr_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -3930,42 +3889,8 @@ async_attr_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -4040,6 +3965,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -4068,6 +3994,9 @@ async_attr_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *
     assert(aid);
     assert(parent_obj);
     assert(parent_obj->magic == ASYNC_MAGIC);
+
+    if (qtype == BLOCKING)
+        is_blocking = true;
 
     if ((args = (async_attr_specific_args_t*)calloc(1, sizeof(async_attr_specific_args_t))) == NULL) {
         fprintf(stderr, "  [ASYNC VOL ERROR] %s with calloc\n", __func__);
@@ -4233,8 +4162,7 @@ async_attr_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -4289,42 +4217,8 @@ async_attr_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -4396,6 +4290,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -4582,8 +4477,7 @@ async_attr_close_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -4638,42 +4532,8 @@ async_attr_close_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -4742,6 +4602,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -4933,8 +4794,7 @@ async_dataset_create_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -4988,42 +4848,8 @@ async_dataset_create_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -5105,6 +4931,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -5334,8 +5161,7 @@ async_dataset_open_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -5389,42 +5215,8 @@ async_dataset_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -5501,6 +5293,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -5710,8 +5503,7 @@ async_dataset_read_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -5766,42 +5558,8 @@ async_dataset_read_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -5874,6 +5632,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -6068,8 +5827,7 @@ async_dataset_write_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -6124,43 +5882,8 @@ async_dataset_write_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false &&
-                task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -6240,6 +5963,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -6544,8 +6268,7 @@ async_dataset_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -6600,42 +6323,8 @@ async_dataset_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -6707,6 +6396,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -6735,6 +6425,9 @@ async_dataset_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
     assert(aid);
     assert(parent_obj);
     assert(parent_obj->magic == ASYNC_MAGIC);
+
+    if (qtype == BLOCKING)
+        is_blocking = true;
 
     if ((args = (async_dataset_get_args_t*)calloc(1, sizeof(async_dataset_get_args_t))) == NULL) {
         fprintf(stderr, "  [ASYNC VOL ERROR] %s with calloc\n", __func__);
@@ -6875,7 +6568,7 @@ async_dataset_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pa
 
 done:
     fflush(stdout);
-    return 1;
+    return 0;
 error:
     if (lock_parent) {
         if (ABT_mutex_unlock(parent_obj->obj_mutex) != ABT_SUCCESS)
@@ -6893,8 +6586,7 @@ async_dataset_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -6949,42 +6641,8 @@ async_dataset_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -7057,6 +6715,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -7085,6 +6744,9 @@ async_dataset_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_
     assert(aid);
     assert(parent_obj);
     assert(parent_obj->magic == ASYNC_MAGIC);
+
+    if (qtype == BLOCKING)
+        is_blocking = true;
 
     if ((args = (async_dataset_specific_args_t*)calloc(1, sizeof(async_dataset_specific_args_t))) == NULL) {
         fprintf(stderr, "  [ASYNC VOL ERROR] %s with calloc\n", __func__);
@@ -7243,8 +6905,7 @@ async_dataset_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -7299,42 +6960,8 @@ async_dataset_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -7406,6 +7033,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -7592,8 +7220,7 @@ async_dataset_close_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -7648,42 +7275,8 @@ async_dataset_close_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -7752,6 +7345,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -7952,8 +7546,7 @@ async_datatype_commit_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -8008,42 +7601,8 @@ async_datatype_commit_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -8120,6 +7679,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -8336,8 +7896,7 @@ async_datatype_open_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -8391,42 +7950,8 @@ async_datatype_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -8504,6 +8029,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -8711,8 +8237,7 @@ async_datatype_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -8767,42 +8292,8 @@ async_datatype_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -8874,6 +8365,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -9060,8 +8552,7 @@ async_datatype_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -9116,42 +8607,8 @@ async_datatype_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -9223,6 +8680,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -9409,8 +8867,7 @@ async_datatype_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -9465,42 +8922,8 @@ async_datatype_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -9574,6 +8997,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -9760,8 +9184,7 @@ async_datatype_close_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -9816,42 +9239,8 @@ async_datatype_close_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -9920,6 +9309,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -10112,8 +9502,7 @@ async_file_create_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     H5VL_async_info_t *info = NULL;
@@ -10142,42 +9531,8 @@ async_file_create_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -10291,6 +9646,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -10372,6 +9728,8 @@ async_file_create(async_instance_t* aid, const char *name, unsigned flags, hid_t
         is_blocking = true;
         async_instance_g->start_abt_push = true;
     }
+    // Reset sleep time for each new file
+    aid->sleep_time = ASYNC_APP_CHECK_SLEEP_TIME;
 
     // Retrieve current library state
     if ( H5VLretrieve_lib_state(&async_task->h5_state) < 0) {
@@ -10485,8 +9843,7 @@ async_file_open_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     H5VL_async_info_t *info = NULL;
@@ -10515,42 +9872,8 @@ async_file_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -10667,6 +9990,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -10745,6 +10069,8 @@ async_file_open(task_list_qtype qtype, async_instance_t* aid, const char *name, 
         is_blocking = true;
         async_instance_g->start_abt_push = true;
     }
+    // Reset sleep time for each new file
+    aid->sleep_time = ASYNC_APP_CHECK_SLEEP_TIME;
 
     // Retrieve current library state
     if ( H5VLretrieve_lib_state(&async_task->h5_state) < 0) {
@@ -10858,8 +10184,7 @@ async_file_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -10914,42 +10239,8 @@ async_file_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -11022,6 +10313,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -11208,8 +10500,7 @@ async_file_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -11264,42 +10555,8 @@ async_file_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -11372,6 +10629,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -11558,8 +10816,7 @@ async_file_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -11614,42 +10871,8 @@ async_file_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -11721,6 +10944,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -11905,8 +11129,7 @@ async_file_close_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -11961,42 +11184,8 @@ async_file_close_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -12089,6 +11278,7 @@ done:
         ABT_mutex_unlock(task->task_mutex);
     }
 
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -12298,8 +11488,7 @@ async_group_create_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -12353,42 +11542,8 @@ async_group_create_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -12469,6 +11624,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -12691,8 +11847,7 @@ async_group_open_fn(void *foo)
     void *obj;
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -12746,42 +11901,8 @@ async_group_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -12858,6 +11979,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -13065,8 +12187,7 @@ async_group_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -13121,42 +12242,8 @@ async_group_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -13228,6 +12315,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -13276,6 +12364,9 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
         args->dxpl_id = H5Pcopy(dxpl_id);
     args->req              = req;
     va_copy(args->arguments, arguments);
+
+    if (qtype == BLOCKING)
+        is_blocking = true;
 
     if (req) {
         H5VL_async_t *new_req;
@@ -13414,8 +12505,7 @@ async_group_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -13470,42 +12560,8 @@ async_group_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -13580,6 +12636,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -13766,8 +12823,7 @@ async_group_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -13822,42 +12878,8 @@ async_group_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -13932,6 +12954,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -14118,8 +13141,7 @@ async_group_close_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -14174,42 +13196,8 @@ async_group_close_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -14285,6 +13273,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -14489,8 +13478,7 @@ async_link_create_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -14545,42 +13533,8 @@ async_link_create_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -14658,6 +13612,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -14868,8 +13823,7 @@ async_link_copy_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -14924,42 +13878,8 @@ async_link_copy_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -15035,6 +13955,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -15240,8 +14161,7 @@ async_link_move_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -15296,42 +14216,8 @@ async_link_move_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -15407,6 +14293,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -15612,8 +14499,7 @@ async_link_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -15668,42 +14554,8 @@ async_link_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -15779,6 +14631,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -15971,8 +14824,7 @@ async_link_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -16027,42 +14879,8 @@ async_link_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -16141,6 +14959,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -16333,8 +15152,7 @@ async_link_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -16389,42 +15207,8 @@ async_link_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -16499,6 +15283,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -16685,8 +15470,7 @@ async_object_open_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -16741,42 +15525,8 @@ async_object_open_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -16853,6 +15603,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -17060,8 +15811,7 @@ async_object_copy_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -17116,42 +15866,8 @@ async_object_copy_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -17231,6 +15947,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -17431,8 +16148,7 @@ async_object_get_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -17487,42 +16203,8 @@ async_object_get_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -17601,6 +16283,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -17798,8 +16481,7 @@ async_object_specific_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -17854,42 +16536,8 @@ async_object_specific_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -17967,6 +16615,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -17995,6 +16644,9 @@ async_object_specific(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t
     assert(aid);
     assert(parent_obj);
     assert(parent_obj->magic == ASYNC_MAGIC);
+
+    if (qtype == BLOCKING)
+        is_blocking = true;
 
     if ((args = (async_object_specific_args_t*)calloc(1, sizeof(async_object_specific_args_t))) == NULL) {
         fprintf(stderr, "  [ASYNC VOL ERROR] %s with calloc\n", __func__);
@@ -18159,8 +16811,7 @@ async_object_optional_fn(void *foo)
 {
     hbool_t acquired = false;
     unsigned int mutex_count = 1;
-    int is_lock = 0, sleep_time = 500;
-    unsigned int attempt_count, new_attempt_count;
+    int is_lock = 0;
     hbool_t is_lib_state_restored = false;
     ABT_pool *pool_ptr;
     async_task_t *task = (async_task_t*)foo;
@@ -18215,42 +16866,8 @@ async_object_optional_fn(void *foo)
     fprintf(stderr,"  [ASYNC ABT DBG] %s: trying to aquire global lock\n", __func__);
 #endif
 
-    while (acquired == false) {
-        if (async_instance_g->ex_delay == false && H5TSmutex_get_attempt_count(&attempt_count) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-            goto done;
-        }
-        if (H5TSmutex_acquire(mutex_count, &acquired) < 0) {
-            fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_acquire failed\n", __func__);
-            goto done;
-        }
-        if (false == acquired) {
-#ifdef ENABLE_DBG_MSG
-            fprintf(stderr,"  [ASYNC ABT DBG] %s lock NOT acquired, wait\n", __func__);
-#endif
-            if(sleep_time > 0) usleep(sleep_time);
-            continue;
-        }
-        if(async_instance_g->ex_delay == false && task->async_obj->file_async_obj->attempt_check_cnt % ASYNC_ATTEMPT_CHECK_INTERVAL == 0) {
-            if(sleep_time > 0) usleep(sleep_time);
-            if (H5TSmutex_get_attempt_count(&new_attempt_count) < 0) {
-                fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_get_attempt_count failed\n", __func__);
-                goto done;
-            }
-            if (new_attempt_count > attempt_count) {
-                if (H5TSmutex_release(&mutex_count) < 0) {
-                    fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
-                }
-                acquired = false;
-            }
-            else {
-                break;
-            }
-            attempt_count = new_attempt_count;
-            task->async_obj->file_async_obj->attempt_check_cnt++;
-            task->async_obj->file_async_obj->attempt_check_cnt %= ASYNC_ATTEMPT_CHECK_INTERVAL;
-        }
-    }
+    if (check_app_acquire_mutex(task, &mutex_count, &acquired) < 0)
+        goto done;
 
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s: global lock acquired\n", __func__);
@@ -18325,6 +16942,7 @@ done:
 #ifdef ENABLE_DBG_MSG
     fprintf(stderr,"  [ASYNC ABT DBG] %s releasing global lock\n", __func__);
 #endif
+    check_app_wait();
     if (acquired == true && H5TSmutex_release(&mutex_count) < 0) {
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5TSmutex_release failed\n", __func__);
     }
@@ -19134,6 +17752,8 @@ H5VL_async_attr_specific(void *obj, const H5VL_loc_params_t *loc_params,
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL ATTRIBUTE Specific\n");
 #endif
+    if (H5VL_ATTR_EXISTS == specific_type)
+        qtype = BLOCKING;
 
     if ((ret_value = async_attr_specific(qtype, async_instance_g, o, loc_params, specific_type, dxpl_id, req, arguments)) < 0 )
         fprintf(stderr,"  [ASYNC VOL ERROR] with async_attr_specific\n");
@@ -19342,6 +17962,8 @@ H5VL_async_dataset_get(void *dset, H5VL_dataset_get_t get_type,
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL DATASET Get\n");
 #endif
+    if (H5VL_DATASET_GET_SPACE == get_type)
+        qtype = BLOCKING;
 
     if ((ret_value = async_dataset_get(qtype, async_instance_g, o, get_type, dxpl_id, req, arguments)) < 0 )
         fprintf(stderr,"  [ASYNC VOL ERROR] with async_dataset_get\n");
@@ -19371,6 +17993,8 @@ H5VL_async_dataset_specific(void *obj, H5VL_dataset_specific_t specific_type,
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL H5Dspecific\n");
 #endif
+    if (H5VL_DATASET_SET_EXTENT == specific_type)
+        qtype = BLOCKING;
 
     // Save copy of underlying VOL connector ID and prov helper, in case of
     // refresh destroying the current object
@@ -19685,8 +18309,10 @@ H5VL_async_file_create(const char *name, unsigned flags, hid_t fcpl_id,
                 return NULL;
 
             /* We require MPI_THREAD_MULTIPLE to operate correctly */
-            if (MPI_THREAD_MULTIPLE != mpi_thread_lvl)
+            if (MPI_THREAD_MULTIPLE != mpi_thread_lvl) {
+                fprintf(stderr, "[ASYNC VOL ERROR] MPI is not initialized with MPI_THREAD_MULTIPLE!\n");
                 return NULL;
+            }
         } /* end if */
     } /* end if */
 }
@@ -20080,6 +18706,8 @@ H5VL_async_group_get(void *obj, H5VL_group_get_t get_type, hid_t dxpl_id,
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL GROUP Get\n");
 #endif
+    if (H5VL_GROUP_GET_INFO == get_type)
+        qtype = BLOCKING;
 
     if ((ret_value = async_group_get(qtype, async_instance_g, o, get_type, dxpl_id, req, arguments)) < 0 )
         fprintf(stderr,"  [ASYNC VOL ERROR] with async_group_get\n");
@@ -20205,7 +18833,7 @@ H5VL_async_link_create(H5VL_link_create_type_t create_type, void *obj,
 #endif
 
     /* Return error if object not open / created */
-    if(loc_params && loc_params->obj_type != H5I_BADID && o && !o->is_obj_valid){
+    if(req == NULL && loc_params && loc_params->obj_type != H5I_BADID && o && !o->is_obj_valid){
         fprintf(stderr,"  [ASYNC VOL ERROR] with async_file_specific, invalid object\n");
         return(-1);
     }
@@ -20232,6 +18860,9 @@ H5VL_async_link_create(H5VL_link_create_type_t create_type, void *obj,
             /* Set the object for the link target */
             cur_obj = ((H5VL_async_t *)cur_obj)->under_object;
         } /* end if */
+
+        if (o && NULL == o->under_object)
+            H5VL_async_object_wait(o);
 
         /* Re-issue 'link create' call, using the unwrapped pieces */
         ret_value = H5VLlink_create_vararg(create_type, (o ? o->under_object : NULL), loc_params, under_vol_id, lcpl_id, lapl_id, dxpl_id, req, cur_obj, cur_params);
@@ -20541,6 +19172,8 @@ H5VL_async_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
 #ifdef ENABLE_ASYNC_LOGGING
     printf("------- ASYNC VOL OBJECT Specific\n");
 #endif
+    if (H5VL_OBJECT_REFRESH == specific_type)
+        qtype = BLOCKING;
 
     if ((ret_value = async_object_specific(qtype, async_instance_g, o, loc_params, specific_type, dxpl_id, req, arguments)) < 0 )
         fprintf(stderr,"  [ASYNC VOL ERROR] with async_object_specific\n");
@@ -20769,14 +19402,15 @@ H5VL_async_request_wait(void *obj, uint64_t timeout, H5VL_request_status_t *stat
 
         usleep(100000);
         now_time = clock();
-        elapsed = (double)(now_time - start_time) / CLOCKS_PER_SEC * 1e9;
+        elapsed = (double)(now_time - start_time) / CLOCKS_PER_SEC;
 
         *status = H5VL_REQUEST_STATUS_IN_PROGRESS;
     } while (elapsed < trigger) ;
 
-    if (elapsed > timeout) {
-        printf("HDF5 async VOL: timedout during wait (elapsed=%.1fs, timeout=%.1fs)\n", elapsed, trigger);
-    }
+#ifdef ENABLE_DBG_MSG
+    if (elapsed > timeout)
+        fprintf(stderr, "  [ASYNC VOL] timedout during wait (elapsed=%es, timeout=%.1fs)\n", elapsed, trigger);
+#endif
 
 done:
     while (false == acquired) {
