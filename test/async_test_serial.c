@@ -22,26 +22,30 @@ link_iterate_cb(hid_t group_id, const char *link_name, const H5L_info2_t *info, 
 int main(int argc, char *argv[])
 {
     hid_t file_id, grp_id, dset1_id, dset0_id, dspace_id, async_dxpl, attr_space, attr0, attr1;
+    hid_t dspace2_id;
     const char *file_name = "async_test_serial.h5";
     const char *grp_name  = "Group";
-    int        *data0_write, *data0_read, *data1_write, *data1_read, attr_data0, attr_data1, attr_read_data0=0, attr_read_data1=0;
+    int        *data0_write = NULL, *data0_read = NULL, *data1_write = NULL, *data1_read = NULL;
+    int        attr_data0, attr_data1, attr_read_data0=0, attr_read_data1=0;
     int        i, ret = 0;
     hsize_t    ds_size[2] = {DIMLEN, DIMLEN};
+    hsize_t    ds2_size[2] = {0, 0};
+    int        sdims;
     hsize_t idx = 0;
     int nlink = 0;
     herr_t     status;
-    hid_t      async_fapl;
+    hid_t      async_fcpl, async_fapl, async_gcpl, get_fcpl, get_gcpl;
     /* int        sleeptime = 100; */
 
+    async_fcpl = H5Pcreate (H5P_FILE_CREATE);
     async_fapl = H5Pcreate (H5P_FILE_ACCESS);
+    async_gcpl = H5Pcreate (H5P_GROUP_CREATE);
     async_dxpl = H5Pcreate (H5P_DATASET_XFER);
-
-    H5Pset_vol_async(async_fapl);
 
     if (print_dbg_msg) printf("H5Fcreate start\n");
     fflush(stdout);
 
-    file_id = H5Fcreate(file_name, H5F_ACC_TRUNC, H5P_DEFAULT, async_fapl);
+    file_id = H5Fcreate(file_name, H5F_ACC_TRUNC, async_fcpl, async_fapl);
     if (file_id < 0) {
         fprintf(stderr, "Error with file create\n");
         ret = -1;
@@ -50,16 +54,49 @@ int main(int argc, char *argv[])
     if (print_dbg_msg) printf("H5Fcreate done\n");
     fflush(stdout);
 
+    if (print_dbg_msg) printf("H5Fget_access_plist start\n");
+    fflush(stdout);
+    get_fcpl = H5Fget_create_plist(file_id);
+    if (get_fcpl < 0) {
+        fprintf(stderr, "Error with getting fcpl\n");
+        ret = -1;
+        goto done;
+    }
+    if (H5Pequal(async_fcpl, get_fcpl) <= 0) {
+        fprintf(stderr, "Error with fcpl, not equal to previously used fcpl\n");
+        ret = -1;
+        goto done;
+    }
+    
+    if (print_dbg_msg) printf("H5Fget_access_plist done\n");
+    fflush(stdout);
 
     if (print_dbg_msg) printf("H5Gcreate start\n");
     fflush(stdout);
-    grp_id = H5Gcreate(file_id, grp_name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    grp_id = H5Gcreate(file_id, grp_name, H5P_DEFAULT, async_gcpl, H5P_DEFAULT);
     if (grp_id < 0) {
         fprintf(stderr, "Error with group create\n");
         ret = -1;
         goto done;
     }
     if (print_dbg_msg) printf("H5Gcreate done\n");
+    fflush(stdout);
+
+    if (print_dbg_msg) printf("H5Gget_create_plist start\n");
+    fflush(stdout);
+    get_gcpl = H5Gget_create_plist(grp_id);
+    if (get_gcpl < 0) {
+        fprintf(stderr, "Error with getting gcpl\n");
+        ret = -1;
+        goto done;
+    }
+    if (H5Pequal(async_gcpl, get_gcpl) <= 0) {
+        fprintf(stderr, "Error with gcpl, not equal to previously used gcpl\n");
+        ret = -1;
+        goto done;
+    }
+ 
+    if (print_dbg_msg) printf("H5Gget_create_plist done\n");
     fflush(stdout);
 
     data0_write = malloc (sizeof(int)*DIMLEN*DIMLEN);
@@ -86,6 +123,30 @@ int main(int argc, char *argv[])
     if (print_dbg_msg) printf("H5Dcreate 0 done\n");
     fflush(stdout);
     /* usleep(sleeptime); */
+
+    if (print_dbg_msg) printf("H5Dget_space 0 start\n");
+    fflush(stdout);
+    dspace2_id  = H5Dget_space(dset0_id);
+    if (dspace2_id < 0) {
+        fprintf(stderr, "Error with getting dspace2\n");
+        ret = -1;
+        goto done;
+    }
+    if (print_dbg_msg) printf("H5Dget_space 0 done\n");
+    fflush(stdout);
+    /* usleep(sleeptime); */
+
+    sdims = H5Sget_simple_extent_dims(dspace2_id, ds2_size, NULL);
+    if (sdims < 0 || sdims != 2) {
+        fprintf(stderr, "Error with getting dspace2 dims\n");
+        ret = -1;
+        goto done;
+    }
+    if (ds2_size[0] != ds_size[0] || ds2_size[1] != ds_size[1]) {
+        fprintf(stderr, "dspace2 dims wrong\n");
+        ret = -1;
+        goto done;
+    }
 
     if (print_dbg_msg) printf("H5Dcreate 1 start\n");
     fflush(stdout);
@@ -317,7 +378,9 @@ int main(int argc, char *argv[])
 
     /* H5Fwait(file_id); */
 
+    H5Pclose(async_fcpl);
     H5Pclose(async_fapl);
+    H5Pclose(async_gcpl);
     H5Pclose(async_dxpl);
     H5Sclose(dspace_id);
     H5Dclose(dset0_id);

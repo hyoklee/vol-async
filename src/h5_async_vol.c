@@ -33,11 +33,11 @@
 #include <time.h>
 
 /* Public HDF5 file */
-#include "hdf5dev.h"
+#include "hdf5.h"
 #include "H5VLconnector.h"
 
 /* This connector's private header */
-#include "h5_vol_external_async_private.h"
+#include "h5_async_vol_private.h"
 
 /* Argobots header */
 #include "abt.h"
@@ -1937,7 +1937,7 @@ static void free_loc_param(H5VL_loc_params_t *loc_params)
 }
 
 static int
-dup_attr_get_args(H5VL_attr_get_args_t *dst_args, const H5VL_attr_get_args_t *src_args,
+dup_attr_get_args(H5VL_attr_get_args_t *dst_args, H5VL_attr_get_args_t *src_args,
                     async_task_t *task)
 {
     hid_t *future_id_ptr = NULL;           /* Pointer to ID for future ID */
@@ -1967,21 +1967,21 @@ dup_attr_get_args(H5VL_attr_get_args_t *dst_args, const H5VL_attr_get_args_t *sr
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_GENPROP_LST;
-            future_id_ptr = &dst_args->args.get_acpl.acpl_id;
+            future_id_ptr = &src_args->args.get_acpl.acpl_id; /* Note: src_args */
             break;
 
         case H5VL_ATTR_GET_TYPE:
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_DATATYPE;
-            future_id_ptr = &dst_args->args.get_type.type_id;
+            future_id_ptr = &src_args->args.get_type.type_id; /* Note: src_args */
             break;
 
         case H5VL_ATTR_GET_SPACE:
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_DATASPACE;
-            future_id_ptr = &dst_args->args.get_space.space_id;
+            future_id_ptr = &src_args->args.get_space.space_id; /* Note: src_args */
             break;
 
         case H5VL_ATTR_GET_STORAGE_SIZE:
@@ -2196,7 +2196,7 @@ free_native_attr_optional_args(async_attr_optional_args_t *args)
 }
 
 static int
-dup_dataset_get_args(H5VL_dataset_get_args_t *dst_args, const H5VL_dataset_get_args_t *src_args,
+dup_dataset_get_args(H5VL_dataset_get_args_t *dst_args, H5VL_dataset_get_args_t *src_args,
                     async_task_t *task)
 {
     hid_t *future_id_ptr = NULL;           /* Pointer to ID for future ID */
@@ -2216,28 +2216,28 @@ dup_dataset_get_args(H5VL_dataset_get_args_t *dst_args, const H5VL_dataset_get_a
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_GENPROP_LST;
-            future_id_ptr = &dst_args->args.get_dapl.dapl_id;
+            future_id_ptr = &src_args->args.get_dapl.dapl_id; /* Note: src_args */
             break;
 
         case H5VL_DATASET_GET_DCPL:
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_GENPROP_LST;
-            future_id_ptr = &dst_args->args.get_dcpl.dcpl_id;
+            future_id_ptr = &src_args->args.get_dcpl.dcpl_id; /* Note: src_args */
             break;
 
         case H5VL_DATASET_GET_SPACE:
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_DATASPACE;
-            future_id_ptr = &dst_args->args.get_space.space_id;
+            future_id_ptr = &src_args->args.get_space.space_id; /* Note: src_args */
             break;
 
         case H5VL_DATASET_GET_TYPE:
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_DATATYPE;
-            future_id_ptr = &dst_args->args.get_type.type_id;
+            future_id_ptr = &src_args->args.get_type.type_id; /* Note: src_args */
             break;
 
         case H5VL_DATASET_GET_SPACE_STATUS:
@@ -2469,7 +2469,7 @@ free_native_dataset_optional_args(async_dataset_optional_args_t *args)
 }
 
 static int
-dup_datatype_get_args(H5VL_datatype_get_args_t *dst_args, const H5VL_datatype_get_args_t *src_args,
+dup_datatype_get_args(H5VL_datatype_get_args_t *dst_args, H5VL_datatype_get_args_t *src_args,
                     async_task_t *task)
 {
     hid_t *future_id_ptr = NULL;           /* Pointer to ID for future ID */
@@ -2489,7 +2489,7 @@ dup_datatype_get_args(H5VL_datatype_get_args_t *dst_args, const H5VL_datatype_ge
             /* Set up for creating future ID */
             need_future_id = true;
             future_id_type = H5I_GENPROP_LST;
-            future_id_ptr = &dst_args->args.get_tcpl.tcpl_id;
+            future_id_ptr = &src_args->args.get_tcpl.tcpl_id; /* Note: src_args */
             break;
 
         case H5VL_DATATYPE_GET_BINARY_SIZE:
@@ -2649,9 +2649,13 @@ free_native_datatype_optional_args(async_datatype_optional_args_t *args)
     }
 }
 
-static void
-dup_file_get_args(H5VL_file_get_args_t *dst_args, const H5VL_file_get_args_t *src_args)
+static int 
+dup_file_get_args(H5VL_file_get_args_t *dst_args, H5VL_file_get_args_t *src_args, async_task_t *task)
 {
+    hid_t *future_id_ptr = NULL;           /* Pointer to ID for future ID */
+    H5I_type_t future_id_type = H5I_BADID; /* Type ("class") of future ID */
+    hbool_t need_future_id = false;        /* Whether an operation needs a future ID */
+
     assert(dst_args);
     assert(src_args);
 
@@ -2661,12 +2665,30 @@ dup_file_get_args(H5VL_file_get_args_t *dst_args, const H5VL_file_get_args_t *sr
     /* Deep copy appropriate things for each operation */
     switch(src_args->op_type) {
         case H5VL_FILE_GET_CONT_INFO:
+            break;
+
         case H5VL_FILE_GET_FAPL:
+            /* Set up for creating future ID */
+            need_future_id = true;
+            future_id_type = H5I_GENPROP_LST;
+            future_id_ptr = &src_args->args.get_fapl.fapl_id; /* Note: src_args */
+            break;
+
         case H5VL_FILE_GET_FCPL:
+            /* Set up for creating future ID */
+            need_future_id = true;
+            future_id_type = H5I_GENPROP_LST;
+            future_id_ptr = &src_args->args.get_fcpl.fcpl_id; /* Note: src_args */
+            break;
+
         case H5VL_FILE_GET_FILENO:
+            break;
         case H5VL_FILE_GET_INTENT:
+            break;
         case H5VL_FILE_GET_NAME:
+            break;
         case H5VL_FILE_GET_OBJ_COUNT:
+            break;
         case H5VL_FILE_GET_OBJ_IDS:
             /* No items to deep copy */
             break;
@@ -2674,28 +2696,86 @@ dup_file_get_args(H5VL_file_get_args_t *dst_args, const H5VL_file_get_args_t *sr
         default:
             assert(0 && "unknown operation");
     }
+
+    /* Set up future ID for operation */
+    if (need_future_id) {
+        async_future_obj_t *future_obj;
+
+        /* Sanity check */
+        assert(future_id_ptr);
+        assert(H5I_BADID != future_id_type);
+
+        /* Allocate & set up future object */
+        if (NULL == (future_obj = calloc(1, sizeof(async_future_obj_t)))) {
+            fprintf(stderr, "  [ASYNC VOL ERROR] %s allocating future object\n", __func__);
+            return -1;
+        }
+        future_obj->id = H5I_INVALID_HID;
+        future_obj->task = task;
+
+        /* Set future object for task */
+        task->future_obj = future_obj;
+
+        /* Register ID for future object, to return to caller */
+        *future_id_ptr = H5Iregister_future(future_id_type, future_obj, async_realize_future_cb, async_discard_future_cb);
+        if (*future_id_ptr < 0) {
+            fprintf(stderr, "  [ASYNC VOL ERROR] %s error creating future ID\n", __func__);
+            return -1;
+        }
+    }
+    
+    return 0;
 }
 
 static void
-free_file_get_args(H5VL_file_get_args_t *args)
+free_file_get_args(H5VL_file_get_args_t *args, async_task_t *task)
 {
     assert(args);
 
     /* Free appropriate things for each operation */
     switch(args->op_type) {
         case H5VL_FILE_GET_CONT_INFO:
+	    break;
+
         case H5VL_FILE_GET_FAPL:
+            /* Check for future object to update */
+            if(task->future_obj)
+                /* Save ID to future object */
+                task->future_obj->id = args->args.get_fapl.fapl_id;
+	    break;
+
         case H5VL_FILE_GET_FCPL:
+            /* Check for future object to update */
+            if(task->future_obj)
+                /* Save ID to future object */
+                task->future_obj->id = args->args.get_fcpl.fcpl_id;
+	    break;
+
         case H5VL_FILE_GET_FILENO:
+	    break;
+
         case H5VL_FILE_GET_INTENT:
+	    break;
+
         case H5VL_FILE_GET_NAME:
+	    break;
+
         case H5VL_FILE_GET_OBJ_COUNT:
+	    break;
+
         case H5VL_FILE_GET_OBJ_IDS:
             /* No items to free */
             break;
 
         default:
             assert(0 && "unknown operation");
+    }
+
+
+    /* Detach future object from task (to be safe) */
+    if(task->future_obj) {
+        task->future_obj->task = NULL;
+        task->future_obj = NULL;
     }
 }
 
@@ -2880,9 +2960,13 @@ free_native_file_optional_args(async_file_optional_args_t *args)
     }
 }
 
-static void
-dup_group_get_args(H5VL_group_get_args_t *dst_args, const H5VL_group_get_args_t *src_args)
+static int 
+dup_group_get_args(H5VL_group_get_args_t *dst_args, H5VL_group_get_args_t *src_args, async_task_t *task)
 {
+    hid_t *future_id_ptr = NULL;           /* Pointer to ID for future ID */
+    H5I_type_t future_id_type = H5I_BADID; /* Type ("class") of future ID */
+    hbool_t need_future_id = false;        /* Whether an operation needs a future ID */
+
     assert(dst_args);
     assert(src_args);
 
@@ -2897,15 +2981,47 @@ dup_group_get_args(H5VL_group_get_args_t *dst_args, const H5VL_group_get_args_t 
 
         case H5VL_GROUP_GET_GCPL:
             /* No items to deep copy */
+            need_future_id = true;
+            future_id_type = H5I_GENPROP_LST;
+            future_id_ptr = &src_args->args.get_gcpl.gcpl_id; /* Note: src_args */
             break;
 
         default:
             assert(0 && "unknown operation");
     }
+
+    /* Set up future ID for operation */
+    if (need_future_id) {
+        async_future_obj_t *future_obj;
+
+        /* Sanity check */
+        assert(future_id_ptr);
+        assert(H5I_BADID != future_id_type);
+
+        /* Allocate & set up future object */
+        if (NULL == (future_obj = calloc(1, sizeof(async_future_obj_t)))) {
+            fprintf(stderr, "  [ASYNC VOL ERROR] %s allocating future object\n", __func__);
+            return -1;
+        }
+        future_obj->id = H5I_INVALID_HID;
+        future_obj->task = task;
+
+        /* Set future object for task */
+        task->future_obj = future_obj;
+
+        /* Register ID for future object, to return to caller */
+        *future_id_ptr = H5Iregister_future(future_id_type, future_obj, async_realize_future_cb, async_discard_future_cb);
+        if (*future_id_ptr < 0) {
+            fprintf(stderr, "  [ASYNC VOL ERROR] %s error creating future ID\n", __func__);
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 static void
-free_group_get_args(H5VL_group_get_args_t *args)
+free_group_get_args(H5VL_group_get_args_t *args, async_task_t *task)
 {
     assert(args);
 
@@ -2916,11 +3032,21 @@ free_group_get_args(H5VL_group_get_args_t *args)
             break;
 
         case H5VL_GROUP_GET_GCPL:
-            /* No items to free */
+            /* Check for future object to update */
+            if(task->future_obj)
+                /* Save ID to future object */
+                task->future_obj->id = args->args.get_gcpl.gcpl_id;
             break;
 
         default:
             assert(0 && "unknown operation");
+    }
+
+
+    /* Detach future object from task (to be safe) */
+    if(task->future_obj) {
+        task->future_obj->task = NULL;
+        task->future_obj = NULL;
     }
 }
 
@@ -11756,7 +11882,7 @@ done:
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
 
-    free_file_get_args(&args->args);
+    free_file_get_args(&args->args, task);
     if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
 
     if (is_lock == 1) {
@@ -11815,7 +11941,10 @@ async_file_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *paren
     async_task->create_time = clock();
 #endif
     args->file             = parent_obj->under_object;
-    dup_file_get_args(&args->args, get_args);
+    if (dup_file_get_args(&args->args, get_args, async_task) < 0) {
+        fprintf(stderr, "  [ASYNC VOL ERROR] %s with duplicating file get arguments\n", __func__);
+        goto error;
+    }
     if(dxpl_id > 0)
         args->dxpl_id = H5Pcopy(dxpl_id);
     args->req              = req;
@@ -13712,7 +13841,7 @@ done:
         fprintf(stderr,"  [ASYNC ABT ERROR] %s H5VLfree_lib_state failed\n", __func__);
     task->h5_state = NULL;
 
-    free_group_get_args(&args->args);
+    free_group_get_args(&args->args, task);
     if(args->dxpl_id > 0)    H5Pclose(args->dxpl_id);
 
     if (is_lock == 1) {
@@ -13770,7 +13899,10 @@ async_group_get(task_list_qtype qtype, async_instance_t* aid, H5VL_async_t *pare
     async_task->create_time = clock();
 #endif
     args->obj              = parent_obj->under_object;
-    dup_group_get_args(&args->args, get_args);
+    if (dup_group_get_args(&args->args, get_args, async_task) < 0) {
+        fprintf(stderr, "  [ASYNC VOL ERROR] %s with duplicating group get arguments\n", __func__);
+        goto error;
+    }
     if(dxpl_id > 0)
         args->dxpl_id = H5Pcopy(dxpl_id);
     args->req              = req;
