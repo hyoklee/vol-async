@@ -46,12 +46,15 @@ jobs:
         cd ..
     - name: Install vol-async
       env:
+        CXX: mpic++
+        CC: mpicc
         HDF5_PLUGIN_PATH: /usr/local/lib
         HDF5_VOL_CONNECTOR: async under_vol=0;under_info={}
       run: |
         pwd
         ls
         ls /usr/local/lib
+        ls /usr/local/bin
         set
         mkdir build
         cd build
@@ -65,4 +68,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: git.txt
-        path: ${{ runner.workspace }}/vol-tests/hdf5/git.txt
+        path: ${{ runner.workspace }}/vol-async/hdf5/git.txt
