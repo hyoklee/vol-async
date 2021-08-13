@@ -27,7 +27,7 @@ jobs:
         path: abt
     
     - name: Install dependencies
-      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin openmpi-dev
+      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev
     - name: Install HDF5
       run: |
         mkdir hdf5/build
