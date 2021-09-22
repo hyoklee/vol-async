@@ -56,7 +56,8 @@ jobs:
         mkdir build
         cd build
         cmake .. -DHDF5_DIR=/usr/local
-        make
+        make install
+        ls /usr/local/lib
         ctest
         pwd
         ls
