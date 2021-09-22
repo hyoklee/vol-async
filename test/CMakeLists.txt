@@ -36,7 +36,7 @@ foreach(test ${tests} ${tests_p})
   target_link_libraries(${test}.exe PRIVATE hdf5_vol_async hdf5 abt ${MPI_C_LIBRARIES})
   # Option 1: If you want to test individually, use the following.
   if(${test} MATCHES parallel )
-    add_test(${test} ${MPIEXEC} -np 4 ./${test}.exe) 
+    add_test(${test} ${MPIEXEC} -np 2 ./${test}.exe) 
   else()
     add_test(${test} ${test}.exe)
   endif()
