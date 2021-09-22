@@ -56,11 +56,9 @@ jobs:
         mkdir build
         cd build
         cmake .. -DHDF5_DIR=/usr/local
-        make install
+        sudo make -j2 install
         ls /usr/local/lib
         ctest
-        pwd
-        ls
         
     - name: Upload
       uses: actions/upload-artifact@v2
