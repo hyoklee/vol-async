@@ -6,7 +6,7 @@ if(DEFINED ENV{HDF5_PLUGIN_PATH})
 endif()
 find_package(MPI)
 include_directories(SYSTEM ${MPI_INCLUDE_PATH})
-set(test  async_test_multifile
+set(tests  async_test_multifile
       async_test_multifile_env
       async_test_serial 
       async_test_serial2
@@ -23,10 +23,10 @@ foreach(test ${tests})
   add_executable(${test}.exe ${CMAKE_CURRENT_SOURCE_DIR}/${test}.c)
   target_link_libraries(${test}.exe PRIVATE hdf5_vol_async hdf5 abt ${MPI_C_LIBRARIES})
   # Option 1: If you want to test individually, use the following.
-  if(${test} MATCHES *parallel* )
-    add_test(${test} ${test}.exe)
-  else()
+  if(${test} MATCHES parallel )
     add_test(${test} "mpirun -np 4 " ${test}.exe) 
+  else()
+    add_test(${test} ${test}.exe)
   endif()
   set_tests_properties(
     ${test}
