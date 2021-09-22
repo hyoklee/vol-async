@@ -1,4 +1,4 @@
-name: Test HDF5 async VOL
+name: Test HDFGroup/hdf5 Async VOL
 
 # Controls when the action will run. 
 on:
