@@ -1,8 +1,14 @@
-if(DEFINED ENV{HDF5_PLUGIN_PATH})
+if(DEFINED $ENV{HDF5_PLUGIN_PATH})
   message("HDF5_PLUGIN_PATH is " $ENV{HDF5_PLUGIN_PATH})
+else()
+  set(ENV{HDF5_PLUGIN_PATH} ${HDF5_VOL_ASYNC_INSTALL_LIB_DIR})
+  message("HDF5_PLUGIN_PATH is set to $ENV{HDF5_PLUGIN_PATH}.")
 endif()
-if(DEFINED ENV{HDF5_PLUGIN_PATH})
+if(DEFINED $ENV{HDF5_VOL_CONNECTOR})
    message("HDF5_VOL_CONNECTOR is " $ENV{HDF5_VOL_CONNECTOR})
+else()
+  set(ENV{HDF5_VOL_CONNECTOR} "async under_vol=0;under_info={}")
+  message("HDF5_VOL_CONNECTOR is set to $ENV{HDF5_VOL_CONNECTOR}.")
 endif()
 set(tests
       async_test_multifile
