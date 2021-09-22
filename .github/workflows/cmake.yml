@@ -52,6 +52,7 @@ jobs:
         HDF5_PLUGIN_PATH: /usr/local/lib
         HDF5_VOL_CONNECTOR: async under_vol=0\;under_info={}
         LD_PRELOAD: /usr/local/lib/libabt.so
+        LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
       run: |
         set
         mkdir build
