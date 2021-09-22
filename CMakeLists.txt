@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(HDF5_VOL_ASYNC VERSION 0.0.1 LANGUAGES C)
-
+include(CTest)
+enable_testing()
 if(NOT HDF5_VOL_ASYNC_INSTALL_BIN_DIR)
   set(HDF5_VOL_ASYNC_INSTALL_BIN_DIR ${CMAKE_INSTALL_PREFIX}/bin)
 endif()
@@ -40,7 +41,5 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src)
 #-----------------------------------------------------------------------------
 # Testing
 #-----------------------------------------------------------------------------
-enable_testing()
-include(CTest)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/test)
