@@ -60,7 +60,7 @@ jobs:
         cmake .. -DHDF5_DIR=/usr/local
         sudo make -j2 install
         ls /usr/local/lib
-        ctest
+        ctest --output-on-failure
         
     - name: Upload
       uses: actions/upload-artifact@v2
